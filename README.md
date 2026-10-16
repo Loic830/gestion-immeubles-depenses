@@ -1,7 +1,7 @@
 # Gestion des immeubles — Module 1 (saisie des dépenses)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.1 : connexion, saisie rapide d'une dépense avec photo du reçu, liste des dépenses récentes.
+Version 0.2 : connexion, saisie rapide avec photo du reçu, liste, écran de détail (reçu plein écran, téléchargement), modification, complétion des brouillons, suppression.
 
 ## 1. Base de données
 
@@ -11,6 +11,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 2. `supabase/002_enregistrer_depense.sql` — fonction qui enregistre l'en-tête, les lignes
    et les pièces jointes dans **une seule transaction** (obligatoire : la vérification
    « somme des lignes = total » s'exécute en fin de transaction).
+3. `supabase/003_modifier_depense.sql` — même principe pour la modification
+   (v0.2 : écran Modifier / Compléter).
 
 ## 2. Lancer en local
 
@@ -35,10 +37,14 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | --- | --- |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
 | `app/page.tsx` | Liste des 50 dernières lignes, total du mois, compteur de brouillons, bouton « + » |
-| `app/nouvelle/page.tsx` | Écran de saisie rapide |
+| `app/nouvelle/page.tsx` | Nouvelle dépense (utilise le formulaire partagé) |
+| `app/depense/[id]/page.tsx` | Détail : reçus (URL signées 10 min), plein écran, téléchargement, suppression douce |
+| `app/depense/[id]/modifier/page.tsx` | Modifier une dépense ou compléter un brouillon |
+| `components/FormulaireDepense.tsx` | Formulaire partagé saisie / modification |
 | `lib/image.ts` | Compression (2000 px, JPEG 0,8), miniature 400 px, retrait EXIF/GPS, SHA-256 |
 | `lib/argent.ts` | Montants en cents, décomposition TPS (5 %) / TVQ (9,975 %) |
 | `supabase/002_enregistrer_depense.sql` | Fonction RPC d'enregistrement atomique |
+| `supabase/003_modifier_depense.sql` | Fonction RPC de modification atomique (lignes remplacées, reçus ajoutés) |
 
 ## Fonctionnement de l'écran de saisie
 
@@ -52,18 +58,27 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 - « Photo seulement » enregistre un brouillon (immeuble obligatoire, le reste peut attendre).
 - Fichiers stockés dans le bucket privé `recus` sous `AAAA/MM/<uuid>.jpg` (+ `_min.jpg`).
 
-## Limites connues de la v0.1
+## Écran de détail (v0.2)
+
+- Toucher une dépense dans la liste ouvre son détail.
+- Toucher un reçu l'affiche en plein écran ; « Ouvrir (zoom) » ouvre l'original pour zoomer ;
+  « Télécharger » récupère le fichier. Les PDF s'ouvrent directement.
+- « Modifier » / « Compléter » réutilise le formulaire ; on peut y ajouter des pages au reçu.
+  Les reçus existants ne sont jamais retirés.
+- « Supprimer » est une suppression douce (`deleted_at`) : la dépense disparaît des listes
+  et des totaux, mais les données et les reçus restent en base.
+
+## Limites connues
 
 - Une seule ligne par dépense dans l'interface (la répartition entre immeubles existe en base,
   pas encore à l'écran).
-- Pas encore d'écran de détail ni de modification ; pas de filtres ni d'export CSV.
+- Pas encore de filtres ni d'export CSV.
 - Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
 - Si l'enregistrement échoue après l'envoi de la photo, le fichier reste orphelin dans le bucket
   (sans conséquence, à nettoyer plus tard).
 
 ## Prochaines étapes
 
-1. Écran de détail : reçu plein écran (URL signée 10 min), modification, compléter un brouillon.
-2. Filtres (période, immeuble, catégorie) et export CSV à partir de `v_depenses_detail`.
-3. Répartition d'une facture entre plusieurs immeubles.
-4. File d'attente hors ligne (IndexedDB + service worker).
+1. Filtres (période, immeuble, catégorie) et export CSV à partir de `v_depenses_detail`.
+2. Répartition d'une facture entre plusieurs immeubles.
+3. File d'attente hors ligne (IndexedDB + service worker).

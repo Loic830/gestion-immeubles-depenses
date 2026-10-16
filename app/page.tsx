@@ -69,7 +69,7 @@ export default function Accueil() {
           <p className="aide">Aucune dépense pour l&apos;instant. Touche « + » pour photographier ton premier reçu.</p>
         )}
         {lignes.map((l) => (
-          <div className="liste-depense" key={l.ligne_id}>
+          <Link href={`/depense/${l.depense_id}`} className="liste-depense" key={l.ligne_id}>
             <div className="infos">
               <div className="titre">{l.fournisseur ?? "Fournisseur à préciser"}</div>
               <div className="sous">
@@ -81,7 +81,7 @@ export default function Accueil() {
               <div className="montant">{formatCents(l.montant_cents ?? l.total_cents)}</div>
               {l.statut === "brouillon" && <span className="pastille">Brouillon</span>}
             </div>
-          </div>
+          </Link>
         ))}
       </div>
 

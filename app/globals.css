@@ -6,6 +6,7 @@
   --bordure: #d9dde3;
   --accent: #1f4e79;
   --accent-clair: #e3edf7;
+  --sur-accent: #ffffff;
   --succes: #1e7b45;
   --alerte: #a15c00;
   --alerte-fond: #fff4e0;
@@ -23,6 +24,7 @@
     --bordure: #333942;
     --accent: #6ea8dc;
     --accent-clair: #1d2c3b;
+    --sur-accent: #0d1b2a;
     --succes: #5fc48a;
     --alerte: #f0b35a;
     --alerte-fond: #33270f;
@@ -102,7 +104,7 @@ textarea { min-height: 72px; resize: vertical; }
   cursor: pointer;
   text-decoration: none;
 }
-.bouton.principal { background: var(--accent); border-color: var(--accent); color: #fff; }
+.bouton.principal { background: var(--accent); border-color: var(--accent); color: var(--sur-accent); }
 .bouton.plein { width: 100%; }
 .bouton:disabled { opacity: 0.55; cursor: default; }
 
@@ -120,7 +122,7 @@ textarea { min-height: 72px; resize: vertical; }
   background: var(--carte);
   color: var(--texte);
 }
-.choix button.actif { background: var(--accent); border-color: var(--accent); color: #fff; }
+.choix button.actif { background: var(--accent); border-color: var(--accent); color: var(--sur-accent); }
 
 .rangee { display: flex; gap: 8px; }
 .rangee > * { flex: 1; }
@@ -166,7 +168,7 @@ details summary { font-weight: 600; cursor: pointer; padding: 4px 0; color: var(
   right: 20px;
   bottom: calc(24px + env(safe-area-inset-bottom));
   width: 64px; height: 64px; border-radius: 32px;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--sur-accent);
   font-size: 34px; line-height: 64px; text-align: center;
   text-decoration: none;
   box-shadow: 0 4px 14px rgba(0,0,0,.25);
@@ -190,3 +192,37 @@ details summary { font-weight: 600; cursor: pointer; padding: 4px 0; color: var(
 
 .total-periode { font-size: 15px; color: var(--discret); }
 .total-periode strong { color: var(--texte); font-size: 20px; }
+
+/* iOS Safari : le champ date ignore width:100% et déborde de la carte */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  min-width: 0;
+  min-height: 50px;
+  text-align: left;
+}
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+
+/* Écran de détail */
+.detail-total { font-size: 34px; font-weight: 700; }
+.detail-sous { color: var(--discret); margin-top: 4px; }
+.champs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; }
+.champs .champ-groupe { display: contents; }
+.champs dt { color: var(--discret); font-size: 15px; }
+.champs dd { margin: 0; font-weight: 600; }
+button.vignette { padding: 0; cursor: pointer; }
+.lien-danger { color: var(--erreur); border-color: var(--erreur); margin-bottom: 12px; }
+
+.plein-ecran {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex; flex-direction: column;
+  padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+}
+.plein-ecran img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+.plein-ecran-actions { display: flex; gap: 8px; margin-top: 12px; }
+.plein-ecran-actions > * { flex: 1; }
+
+/* Liste : lignes cliquables */
+a.liste-depense { color: inherit; text-decoration: none; }
