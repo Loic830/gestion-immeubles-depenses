@@ -9,6 +9,7 @@ import { formatCents } from "@/lib/argent";
 import { PERIODES, bornesPeriode, type CodePeriode } from "@/lib/periodes";
 import { genererCsv, montantCsv, telechargerFichier } from "@/lib/csv";
 import { exporterDossier } from "@/lib/exportDossier";
+import BarreOnglets from "@/components/BarreOnglets";
 
 type Ligne = {
   ligne_id: string;
@@ -181,7 +182,7 @@ function ListeDepenses() {
   if (!pret || !session) return null;
 
   return (
-    <main className="page">
+    <main className="page avec-onglets">
       <div className="entete">
         <h1>Dépenses</h1>
         <button className="bouton" onClick={() => supabase.auth.signOut()}>Déconnexion</button>
@@ -313,6 +314,7 @@ function ListeDepenses() {
       </div>
 
       <Link href="/nouvelle" className="fab" aria-label="Nouvelle dépense">+</Link>
+      <BarreOnglets />
     </main>
   );
 }

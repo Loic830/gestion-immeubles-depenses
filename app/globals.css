@@ -244,3 +244,48 @@ a.liste-depense { color: inherit; text-decoration: none; }
 /* Répartition entre immeubles (v0.5) */
 .ligne-repartition { border-top: 1px solid var(--bordure); padding-top: 12px; margin-top: 12px; }
 .lien-retirer { border: none; background: none; font: inherit; font-size: 15px; color: var(--erreur); cursor: pointer; padding: 0; }
+
+/* Barre d'onglets (v0.6) */
+.barre-onglets {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; justify-content: center; gap: 4px;
+  padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+  background: var(--carte); border-top: 1px solid var(--bordure);
+}
+.barre-onglets a {
+  flex: 1; max-width: 200px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0; border-radius: 10px;
+  font-size: 13px; font-weight: 600; color: var(--discret); text-decoration: none;
+}
+.barre-onglets a span { font-size: 22px; line-height: 1; }
+.barre-onglets a.actif { color: var(--accent); background: var(--accent-clair); }
+.avec-onglets { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+.avec-onglets .fab { bottom: calc(84px + env(safe-area-inset-bottom)); }
+
+/* Baux (v0.6) */
+.immeuble-titre { font-size: 18px; margin: 20px 0 8px; }
+.logement-ligne {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--bordure);
+  color: inherit; text-decoration: none;
+}
+.logement-ligne:last-child { border-bottom: none; }
+.logement-numero {
+  min-width: 52px; text-align: center; font-weight: 700;
+  padding: 6px 8px; border-radius: 8px; background: var(--accent-clair); color: var(--accent);
+}
+.logement-ligne .infos { flex: 1; min-width: 0; }
+.logement-ligne .titre { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logement-ligne .sous { font-size: 14px; color: var(--discret); }
+.pastille.vacant { background: var(--erreur-fond); color: var(--erreur); }
+.pastille.ok { background: var(--accent-clair); color: var(--succes); }
+.choix-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.choix-2 button {
+  font: inherit; font-weight: 600; padding: 12px 6px; border-radius: 10px;
+  border: 1px solid var(--bordure); background: var(--carte); color: var(--texte);
+}
+.choix-2 button.actif { background: var(--accent); border-color: var(--accent); color: var(--sur-accent); }
+.bloc-locataire { border-top: 1px solid var(--bordure); padding-top: 12px; margin-top: 12px; }
+.liens-contact { display: flex; gap: 8px; margin-top: 6px; }
+.liens-contact a { font-size: 15px; padding: 6px 12px; }

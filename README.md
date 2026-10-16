@@ -1,7 +1,7 @@
-# Gestion des immeubles — Module 1 (saisie des dépenses)
+# Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.5 : saisie rapide avec photo du reçu, répartition entre immeubles, détail et modification, filtres, totaux par catégorie, export CSV et dossier comptable (Excel + reçus en ZIP). Module 1 complet.
+Version 0.6 : Module 1 complet (dépenses) + début du Module 2 : barre d'onglets, baux et locataires, loyers dus générés automatiquement.
 
 ## 1. Base de données
 
@@ -13,6 +13,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
    « somme des lignes = total » s'exécute en fin de transaction).
 3. `supabase/003_modifier_depense.sql` — même principe pour la modification
    (v0.2 : écran Modifier / Compléter).
+4. `supabase/004_module2_loyers.sql` — Module 2 : locataires, baux, extras, échéances,
+   paiements, renouvellements, documents ; vues v_soldes et v_baux ; RPC creer_bail.
 
 ## 2. Lancer en local
 
@@ -35,6 +37,11 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 
 | Fichier | Rôle |
 | --- | --- |
+| `components/BarreOnglets.tsx` | Barre d'onglets du bas (Dépenses · Baux ; Loyers en v0.7) |
+| `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
+| `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
+| `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
+| `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
 | `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
 | `lib/periodes.ts` | Calcul des périodes (mois, trimestre, année, dates précises) |
@@ -115,6 +122,17 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - Une dépense déjà répartie s'ouvre en mode répartition dans « Modifier ».
 - Dans la liste, les filtres et les exports, chaque ligne compte pour son immeuble.
 
+## Baux (v0.6)
+
+- Onglet « Baux » : chaque logement avec son bail actif (ou à venir) ; « Vacant » si aucun bail,
+  toucher pour en créer un avec le logement déjà choisi.
+- « Nouveau bail » appelle la fonction `creer_bail` : bail, locataires, extras, loyers dus
+  (un par mois) et fenêtre d'avis TAL sont créés dans une seule transaction.
+- Durée « 12 mois » : la fin est calculée (1er juillet → 30 juin). « Indéterminée » : les loyers
+  dus se prolongent à chaque ouverture de l'onglet (`prolonger_echeances`).
+- Deux baux qui se chevauchent sur le même logement sont refusés (contrainte d'exclusion).
+- La suppression d'un bail est réservée aux erreurs de saisie (suppression douce).
+
 ## Limites connues
 
 - Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
@@ -123,6 +141,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. Module 2 : revenus de loyers (baux, loyers reçus, retards, vacances).
-2. Rapport annuel par immeuble au format T776 / TP-128 (revenus + dépenses).
-3. File d'attente hors ligne (IndexedDB + service worker).
+1. v0.7 : onglet Loyers — loyers du mois, « Reçu » en un geste, paiements partiels, retards.
+2. v0.8 : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
+4. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.
