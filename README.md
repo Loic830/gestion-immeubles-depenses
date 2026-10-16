@@ -1,7 +1,7 @@
 # Gestion des immeubles — Module 1 (saisie des dépenses)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.2 : connexion, saisie rapide avec photo du reçu, liste, écran de détail (reçu plein écran, téléchargement), modification, complétion des brouillons, suppression.
+Version 0.3 : saisie rapide avec photo du reçu, détail et modification, filtres (période, immeubles, catégorie, statut), totaux par catégorie, export CSV.
 
 ## 1. Base de données
 
@@ -36,7 +36,9 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | Fichier | Rôle |
 | --- | --- |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
-| `app/page.tsx` | Liste des 50 dernières lignes, total du mois, compteur de brouillons, bouton « + » |
+| `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
+| `lib/periodes.ts` | Calcul des périodes (mois, trimestre, année, dates précises) |
+| `lib/csv.ts` | Export CSV pour Excel en français (séparateur « ; », virgule décimale, UTF-8 avec BOM) |
 | `app/nouvelle/page.tsx` | Nouvelle dépense (utilise le formulaire partagé) |
 | `app/depense/[id]/page.tsx` | Détail : reçus (URL signées 10 min), plein écran, téléchargement, suppression douce |
 | `app/depense/[id]/modifier/page.tsx` | Modifier une dépense ou compléter un brouillon |
@@ -68,17 +70,27 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 - « Supprimer » est une suppression douce (`deleted_at`) : la dépense disparaît des listes
   et des totaux, mais les données et les reçus restent en base.
 
+## Liste, filtres et export (v0.3)
+
+- Période par défaut : cette année. Autres choix : ce mois-ci, mois dernier, trimestre,
+  année dernière, tout, dates précises.
+- Filtres : un ou plusieurs immeubles, une catégorie (une catégorie principale inclut
+  ses sous-catégories), statut (complètes / brouillons).
+- Les filtres sont gardés dans l'adresse : un lien ou un signet conserve la sélection.
+- Totaux : total de la sélection, part en capital, répartition par catégorie principale.
+- « Exporter en CSV » : une ligne par ligne de dépense, avec la ligne T776, prête pour Excel.
+- Plafond : 1000 lignes par affichage (limite Supabase par défaut) ; un avis s'affiche si atteint.
+
 ## Limites connues
 
 - Une seule ligne par dépense dans l'interface (la répartition entre immeubles existe en base,
   pas encore à l'écran).
-- Pas encore de filtres ni d'export CSV.
 - Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
 - Si l'enregistrement échoue après l'envoi de la photo, le fichier reste orphelin dans le bucket
   (sans conséquence, à nettoyer plus tard).
 
 ## Prochaines étapes
 
-1. Filtres (période, immeuble, catégorie) et export CSV à partir de `v_depenses_detail`.
-2. Répartition d'une facture entre plusieurs immeubles.
+1. Répartition d'une facture entre plusieurs immeubles.
+2. Rapport annuel par immeuble au format T776 / TP-128.
 3. File d'attente hors ligne (IndexedDB + service worker).

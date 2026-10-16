@@ -226,3 +226,17 @@ button.vignette { padding: 0; cursor: pointer; }
 
 /* Liste : lignes cliquables */
 a.liste-depense { color: inherit; text-decoration: none; }
+
+/* Filtres et répartition (v0.3) */
+.lien-filtres {
+  display: block; margin-top: 12px; padding: 4px 0;
+  border: none; background: none; font: inherit; font-weight: 600; color: var(--accent); cursor: pointer;
+}
+.repartition { margin-top: 14px; display: grid; gap: 8px; }
+.repartition-ligne {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  align-items: center; gap: 10px; font-size: 15px;
+}
+.repartition-ligne > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repartition-barre { height: 8px; border-radius: 4px; background: var(--accent-clair); overflow: hidden; }
+.repartition-barre > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
