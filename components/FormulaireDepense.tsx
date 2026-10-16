@@ -7,13 +7,16 @@ import { supabase, BUCKET_RECUS } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { preparerFichier, cleStockage, type FichierPrepare } from "@/lib/image";
 import { versCents, formatCents, centsVersSaisie, decomposerTaxes } from "@/lib/argent";
+import { repartirEgalement, repartirSelonPoids } from "@/lib/repartition";
 
-type Immeuble = { id: string; nom: string };
+type Immeuble = { id: string; nom: string; nb_logements: number | null };
 type Logement = { id: string; immeuble_id: string; numero: string };
 type Categorie = { id: string; nom: string; parent_id: string | null; nature_defaut: "courante" | "capital"; ordre: number };
 type Fournisseur = { id: string; nom: string; categorie_defaut_id: string | null };
 type ModePaiement = { id: string; nom: string };
 type PieceExistante = { id: string; mime_type: string; apercuUrl: string | null };
+/** Une ligne de ventilation en mode « répartie » */
+type LigneForm = { cle: string; immeubleId: string; logementId: string; categorieId: string; montantSaisi: string };
 
 type DepenseExistante = {
   id: string;
@@ -27,7 +30,7 @@ type DepenseExistante = {
   notes: string | null;
   mode_paiement_id: string | null;
   fournisseur: { nom: string } | null;
-  lignes: { immeuble_id: string; logement_id: string | null; categorie_id: string | null }[];
+  lignes: { immeuble_id: string; logement_id: string | null; categorie_id: string | null; montant_cents: number | null }[];
   pieces: { id: string; storage_key: string; miniature_key: string | null; mime_type: string }[];
 };
 
@@ -78,6 +81,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
   // État
   const [statutInitial, setStatutInitial] = useState<"brouillon" | "complete" | null>(null);
   const [repartie, setRepartie] = useState(false);
+  const [lignesForm, setLignesForm] = useState<LigneForm[]>([]);
   const [chargement, setChargement] = useState(true);
   const [traitement, setTraitement] = useState(false);
   const [envoi, setEnvoi] = useState(false);
@@ -93,7 +97,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
     if (!session) return;
     (async () => {
       const [im, lo, ca, fo, mo] = await Promise.all([
-        supabase.from("immeubles").select("id, nom").is("deleted_at", null).eq("actif", true).order("nom"),
+        supabase.from("immeubles").select("id, nom, nb_logements").is("deleted_at", null).eq("actif", true).order("nom"),
         supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true).order("numero"),
         supabase.from("categories").select("id, nom, parent_id, nature_defaut, ordre").is("deleted_at", null).eq("actif", true).order("ordre"),
         supabase.from("fournisseurs").select("id, nom, categorie_defaut_id").is("deleted_at", null).order("nom"),
@@ -118,7 +122,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
         .from("depenses")
         .select(`id, statut, date_facture, no_facture, sous_total_cents, tps_cents, tvq_cents, total_cents, notes, mode_paiement_id,
                  fournisseur:fournisseurs(nom),
-                 lignes:depense_lignes(immeuble_id, logement_id, categorie_id),
+                 lignes:depense_lignes(immeuble_id, logement_id, categorie_id, montant_cents),
                  pieces:pieces_jointes(id, storage_key, miniature_key, mime_type)`)
         .eq("id", depenseId)
         .is("deleted_at", null)
@@ -145,7 +149,16 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
         setCategorieId(premiere.categorie_id ?? "");
         setCategorieTouchee(Boolean(premiere.categorie_id));
       }
-      setRepartie(d.lignes.length > 1);
+      if (d.lignes.length > 1) {
+        setRepartie(true);
+        setLignesForm(d.lignes.map((l) => ({
+          cle: crypto.randomUUID(),
+          immeubleId: l.immeuble_id,
+          logementId: l.logement_id ?? "",
+          categorieId: l.categorie_id ?? "",
+          montantSaisi: centsVersSaisie(l.montant_cents),
+        })));
+      }
 
       // Aperçus des reçus déjà enregistrés (URL signées, valides 10 min)
       const chemins = d.pieces.map((p) => p.miniature_key ?? p.storage_key).filter((c) => !c.endsWith(".pdf"));
@@ -183,6 +196,73 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
     totalCents !== null && sousTotal !== null
       ? totalCents - (sousTotal + (tps ?? 0) + (tvq ?? 0))
       : 0;
+
+  // ---- Répartition entre immeubles ----
+  const sommeLignes = lignesForm.reduce((s, l) => s + (versCents(l.montantSaisi) ?? 0), 0);
+  const resteARepartir = totalCents === null ? null : totalCents - sommeLignes;
+
+  function nouvelleLigne(patch: Partial<LigneForm> = {}): LigneForm {
+    return { cle: crypto.randomUUID(), immeubleId: "", logementId: "", categorieId, montantSaisi: "", ...patch };
+  }
+
+  function activerRepartition() {
+    setErreur(null);
+    const autres = immeubles.filter((i) => i.id !== immeubleId);
+    setLignesForm([
+      nouvelleLigne({ immeubleId, logementId, montantSaisi: totalSaisi }),
+      nouvelleLigne({ immeubleId: autres[0]?.id ?? "" }),
+    ]);
+    setRepartie(true);
+  }
+
+  function annulerRepartition() {
+    const premiere = lignesForm[0];
+    if (premiere) {
+      setImmeubleId(premiere.immeubleId);
+      setLogementId(premiere.logementId);
+      if (premiere.categorieId) setCategorieId(premiere.categorieId);
+    }
+    setLignesForm([]);
+    setRepartie(false);
+  }
+
+  function majLigne(cle: string, patch: Partial<LigneForm>) {
+    setLignesForm((avant) => avant.map((l) => (l.cle === cle ? { ...l, ...patch } : l)));
+  }
+
+  function appliquerParts(parts: number[]) {
+    setLignesForm((avant) => avant.map((l, i) => ({ ...l, montantSaisi: centsVersSaisie(parts[i] ?? 0) })));
+  }
+
+  function repartirAPartsEgales() {
+    if (totalCents === null) { setErreur("Entre d'abord le montant total."); return; }
+    appliquerParts(repartirEgalement(totalCents, lignesForm.length));
+  }
+
+  function repartirSelonLogements() {
+    if (totalCents === null) { setErreur("Entre d'abord le montant total."); return; }
+    const poids = lignesForm.map((l) => immeubles.find((i) => i.id === l.immeubleId)?.nb_logements ?? 0);
+    appliquerParts(repartirSelonPoids(totalCents, poids));
+  }
+
+  function lignesAEnvoyer() {
+    if (!repartie) {
+      return [{
+        immeuble_id: immeubleId,
+        logement_id: logementId || null,
+        categorie_id: categorieId || null,
+        montant_cents: totalCents,
+        description: null,
+      }];
+    }
+    return lignesForm.map((l) => ({
+      immeuble_id: l.immeubleId,
+      logement_id: l.logementId || null,
+      categorie_id: l.categorieId || null,
+      montant_cents: versCents(l.montantSaisi),
+      description: null,
+    }));
+  }
 
   async function ajouterFichiers(liste: FileList | null) {
     if (!liste || liste.length === 0) return;
@@ -269,11 +349,19 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
     setErreur(null);
     setConfirmation(null);
 
-    if (repartie) { setErreur("Cette dépense est répartie entre plusieurs immeubles : la modification n'est pas encore possible ici."); return; }
-    if (!immeubleId) { setErreur("Choisis l'immeuble."); return; }
+    if (!repartie && !immeubleId) { setErreur("Choisis l'immeuble."); return; }
+    if (repartie && lignesForm.some((l) => !l.immeubleId)) { setErreur("Choisis l'immeuble de chaque ligne."); return; }
     if (statut === "complete") {
       if (totalCents === null) { setErreur("Entre le montant total (ex. 142,37)."); return; }
-      if (!categorieId) { setErreur("Choisis la catégorie, ou garde la dépense en brouillon."); return; }
+      if (!repartie && !categorieId) { setErreur("Choisis la catégorie, ou garde la dépense en brouillon."); return; }
+      if (repartie) {
+        if (lignesForm.some((l) => !l.categorieId)) { setErreur("Choisis la catégorie de chaque ligne."); return; }
+        if (lignesForm.some((l) => versCents(l.montantSaisi) === null)) { setErreur("Entre le montant de chaque ligne."); return; }
+        if (resteARepartir !== 0) {
+          setErreur(`La répartition ne balance pas : il reste ${formatCents(resteARepartir)} à répartir.`);
+          return;
+        }
+      }
     }
     if (!modeModification && statut === "brouillon" && fichiers.length === 0 && totalCents === null) {
       setErreur("Ajoute au moins une photo ou un montant.");
@@ -295,26 +383,22 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
         total_cents: totalCents,
         statut,
         notes: notes || null,
-        lignes: [{
-          immeuble_id: immeubleId,
-          logement_id: logementId || null,
-          categorie_id: categorieId || null,
-          montant_cents: totalCents,
-          description: null,
-        }],
+        lignes: lignesAEnvoyer(),
         pieces,
       };
       const { error } = await supabase.rpc(depenseId ? "modifier_depense" : "enregistrer_depense", { p });
       if (error) throw new Error(error.message);
 
-      ecrireStockageLocal(CLE_DERNIER_IMMEUBLE, immeubleId);
+      if (!repartie) ecrireStockageLocal(CLE_DERNIER_IMMEUBLE, immeubleId);
 
       if (depenseId) {
         router.push(`/depense/${depenseId}`);
         return;
       }
 
-      const nomImmeuble = immeubles.find((i) => i.id === immeubleId)?.nom ?? "";
+      const nomImmeuble = repartie
+        ? `réparti sur ${lignesForm.length} lignes`
+        : immeubles.find((i) => i.id === immeubleId)?.nom ?? "";
       setConfirmation(
         statut === "complete"
           ? `${formatCents(totalCents)} · ${nomImmeuble} · ${categorieChoisie?.nom ?? ""}`
@@ -341,10 +425,29 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
     setCategorieTouchee(false);
     setDateFacture(aujourdHui());
     setLogementId("");
+    setRepartie(false);
+    setLignesForm([]);
     setSousTotalSaisi(""); setTpsSaisie(""); setTvqSaisie("");
     setModeId(""); setNoFacture(""); setNotes("");
     setAvertissementDoublon(null);
   }
+
+  const optionsCategories = (
+    <>
+      <option value="">— Choisir —</option>
+      {categoriesPrincipales.map((p) => {
+        const enfants = categories.filter((c) => c.parent_id === p.id);
+        return enfants.length === 0 ? (
+          <option key={p.id} value={p.id}>{p.nom}</option>
+        ) : (
+          <optgroup key={p.id} label={p.nom}>
+            <option value={p.id}>{p.nom} (général)</option>
+            {enfants.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+          </optgroup>
+        );
+      })}
+    </>
+  );
 
   if (!pret || !session) return null;
 
@@ -411,15 +514,22 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
                value={totalSaisi} onChange={(e) => setTotalSaisi(e.target.value)} />
         {totalSaisi !== "" && totalCents === null && <p className="aide">Format attendu : 142,37</p>}
 
-        <label>Immeuble</label>
-        <div className="choix">
-          {immeubles.map((im) => (
-            <button key={im.id} type="button" className={im.id === immeubleId ? "actif" : ""}
-                    onClick={() => { setImmeubleId(im.id); setLogementId(""); }}>
-              {im.nom}
+        {!repartie && (
+          <>
+            <label>Immeuble</label>
+            <div className="choix">
+              {immeubles.map((im) => (
+                <button key={im.id} type="button" className={im.id === immeubleId ? "actif" : ""}
+                        onClick={() => { setImmeubleId(im.id); setLogementId(""); }}>
+                  {im.nom}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="lien-filtres" onClick={activerRepartition}>
+              + Répartir entre plusieurs immeubles
             </button>
-          ))}
-        </div>
+          </>
+        )}
 
         <label htmlFor="fournisseur">Fournisseur</label>
         <input id="fournisseur" list="liste-fournisseurs" autoComplete="off" placeholder="ex. Rona, Hydro-Québec"
@@ -428,40 +538,109 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
           {fournisseurs.map((f) => <option key={f.id} value={f.nom} />)}
         </datalist>
 
-        <label htmlFor="categorie">Catégorie</label>
-        <select id="categorie" value={categorieId}
-                onChange={(e) => { setCategorieId(e.target.value); setCategorieTouchee(true); }}>
-          <option value="">— Choisir —</option>
-          {categoriesPrincipales.map((p) => {
-            const enfants = categories.filter((c) => c.parent_id === p.id);
-            return enfants.length === 0 ? (
-              <option key={p.id} value={p.id}>{p.nom}</option>
-            ) : (
-              <optgroup key={p.id} label={p.nom}>
-                <option value={p.id}>{p.nom} (général)</option>
-                {enfants.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
-              </optgroup>
-            );
-          })}
-        </select>
-        {categorieChoisie?.nature_defaut === "capital" && (
-          <p className="aide">Dépense en capital : amortissable, elle ne se déduit pas en entier cette année.</p>
+        {!repartie && (
+          <>
+            <label htmlFor="categorie">Catégorie</label>
+            <select id="categorie" value={categorieId}
+                    onChange={(e) => { setCategorieId(e.target.value); setCategorieTouchee(true); }}>
+              {optionsCategories}
+            </select>
+            {categorieChoisie?.nature_defaut === "capital" && (
+              <p className="aide">Dépense en capital : amortissable, elle ne se déduit pas en entier cette année.</p>
+            )}
+          </>
         )}
 
         <label htmlFor="date">Date de la facture</label>
         <input id="date" type="date" value={dateFacture} onChange={(e) => setDateFacture(e.target.value)} />
       </section>
 
+      {/* 2b. Répartition entre immeubles */}
+      {repartie && (
+        <section className="carte">
+          <div className="entete" style={{ marginBottom: 8 }}>
+            <strong>Répartition</strong>
+            <button type="button" className="bouton" style={{ padding: "6px 12px" }} onClick={annulerRepartition}>
+              Un seul immeuble
+            </button>
+          </div>
+
+          <div className="rangee">
+            <button type="button" className="bouton" onClick={repartirAPartsEgales}>Parts égales</button>
+            <button type="button" className="bouton" onClick={repartirSelonLogements}>Selon nb de logements</button>
+          </div>
+
+          {lignesForm.map((l, i) => {
+            const cat = categories.find((c) => c.id === l.categorieId);
+            return (
+              <div className="ligne-repartition" key={l.cle}>
+                <div className="entete" style={{ margin: "0 0 6px" }}>
+                  <span className="aide" style={{ margin: 0 }}>Ligne {i + 1}</span>
+                  {lignesForm.length > 2 && (
+                    <button type="button" className="lien-retirer"
+                            onClick={() => setLignesForm((avant) => avant.filter((x) => x.cle !== l.cle))}>
+                      Retirer
+                    </button>
+                  )}
+                </div>
+                <div className="rangee">
+                  <select value={l.immeubleId} aria-label={`Immeuble, ligne ${i + 1}`}
+                          onChange={(e) => majLigne(l.cle, { immeubleId: e.target.value, logementId: "" })}>
+                    <option value="">Immeuble…</option>
+                    {immeubles.map((im) => <option key={im.id} value={im.id}>{im.nom}</option>)}
+                  </select>
+                  <input inputMode="decimal" placeholder="Montant" value={l.montantSaisi}
+                         aria-label={`Montant, ligne ${i + 1}`}
+                         onChange={(e) => majLigne(l.cle, { montantSaisi: e.target.value })} />
+                </div>
+                <div className="rangee" style={{ marginTop: 8 }}>
+                  <select value={l.categorieId} aria-label={`Catégorie, ligne ${i + 1}`}
+                          onChange={(e) => majLigne(l.cle, { categorieId: e.target.value })}>
+                    {optionsCategories}
+                  </select>
+                  <select value={l.logementId} aria-label={`Logement, ligne ${i + 1}`} disabled={!l.immeubleId}
+                          onChange={(e) => majLigne(l.cle, { logementId: e.target.value })}>
+                    <option value="">Tout l&apos;immeuble</option>
+                    {logements.filter((x) => x.immeuble_id === l.immeubleId)
+                      .map((x) => <option key={x.id} value={x.id}>{x.numero}</option>)}
+                  </select>
+                </div>
+                {cat?.nature_defaut === "capital" && <p className="aide">Dépense en capital (amortissable).</p>}
+              </div>
+            );
+          })}
+
+          <button type="button" className="bouton plein" style={{ marginTop: 12 }}
+                  onClick={() => setLignesForm((avant) => [...avant, nouvelleLigne()])}>
+            + Ajouter une ligne
+          </button>
+
+          {resteARepartir !== null && (
+            <p className="aide" style={{ color: resteARepartir === 0 ? "var(--succes)" : "var(--alerte)", fontWeight: 600 }}>
+              {resteARepartir === 0
+                ? "La répartition balance avec le total."
+                : resteARepartir > 0
+                  ? `Reste à répartir : ${formatCents(resteARepartir)}`
+                  : `Répartition trop élevée de ${formatCents(-resteARepartir)}`}
+            </p>
+          )}
+        </section>
+      )}
+
       {/* 3. Détails facultatifs */}
       <section className="carte">
         <details open={modeModification && Boolean(logementId || noFacture || notes || modeId || sousTotalSaisi)}>
           <summary>Plus de détails</summary>
 
-          <label htmlFor="logement">Logement</label>
-          <select id="logement" value={logementId} onChange={(e) => setLogementId(e.target.value)} disabled={!immeubleId}>
-            <option value="">{immeubleId ? "Tout l'immeuble" : "Choisis d'abord l'immeuble"}</option>
-            {logementsImmeuble.map((l) => <option key={l.id} value={l.id}>{l.numero}</option>)}
-          </select>
+          {!repartie && (
+            <>
+              <label htmlFor="logement">Logement</label>
+              <select id="logement" value={logementId} onChange={(e) => setLogementId(e.target.value)} disabled={!immeubleId}>
+                <option value="">{immeubleId ? "Tout l'immeuble" : "Choisis d'abord l'immeuble"}</option>
+                {logementsImmeuble.map((l) => <option key={l.id} value={l.id}>{l.numero}</option>)}
+              </select>
+            </>
+          )}
 
           <label>Taxes</label>
           <button type="button" className="bouton plein" onClick={calculerTaxes}>Calculer TPS/TVQ à partir du total</button>

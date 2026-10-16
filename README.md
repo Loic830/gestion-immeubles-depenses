@@ -1,7 +1,7 @@
 # Gestion des immeubles — Module 1 (saisie des dépenses)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.4 : saisie rapide avec photo du reçu, détail et modification, filtres, totaux par catégorie, export CSV et dossier comptable (Excel + reçus en ZIP).
+Version 0.5 : saisie rapide avec photo du reçu, répartition entre immeubles, détail et modification, filtres, totaux par catégorie, export CSV et dossier comptable (Excel + reçus en ZIP). Module 1 complet.
 
 ## 1. Base de données
 
@@ -45,6 +45,7 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/depense/[id]/modifier/page.tsx` | Modifier une dépense ou compléter un brouillon |
 | `components/FormulaireDepense.tsx` | Formulaire partagé saisie / modification |
 | `lib/image.ts` | Compression (2000 px, JPEG 0,8), miniature 400 px, retrait EXIF/GPS, SHA-256 |
+| `lib/repartition.ts` | Répartition d'un montant au cent près (parts égales ou au prorata des logements) |
 | `lib/argent.ts` | Montants en cents, décomposition TPS (5 %) / TVQ (9,975 %) |
 | `supabase/002_enregistrer_depense.sql` | Fonction RPC d'enregistrement atomique |
 | `supabase/003_modifier_depense.sql` | Fonction RPC de modification atomique (lignes remplacées, reçus ajoutés) |
@@ -103,16 +104,25 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - ExcelJS et JSZip sont chargés seulement au clic (l'application reste légère).
 - Tout se fait dans le navigateur : à privilégier sur ordinateur pour une année complète.
 
+## Répartition entre immeubles (v0.5)
+
+- Dans le formulaire : « + Répartir entre plusieurs immeubles » sous les boutons d'immeuble.
+- Chaque ligne a son immeuble, son montant, sa catégorie et (facultatif) son logement.
+- Raccourcis : « Parts égales » ou « Selon nb de logements » (ex. 9 / 8 / 4) ; la méthode du
+  plus fort reste garantit que la somme des lignes égale le total au cent près.
+- Indicateur « Reste à répartir » ; l'enregistrement « complète » est bloqué tant que ça ne balance pas
+  (et la base le vérifie aussi).
+- Une dépense déjà répartie s'ouvre en mode répartition dans « Modifier ».
+- Dans la liste, les filtres et les exports, chaque ligne compte pour son immeuble.
+
 ## Limites connues
 
-- Une seule ligne par dépense dans l'interface (la répartition entre immeubles existe en base,
-  pas encore à l'écran).
 - Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
 - Si l'enregistrement échoue après l'envoi de la photo, le fichier reste orphelin dans le bucket
   (sans conséquence, à nettoyer plus tard).
 
 ## Prochaines étapes
 
-1. Répartition d'une facture entre plusieurs immeubles.
-2. Rapport annuel par immeuble au format T776 / TP-128.
+1. Module 2 : revenus de loyers (baux, loyers reçus, retards, vacances).
+2. Rapport annuel par immeuble au format T776 / TP-128 (revenus + dépenses).
 3. File d'attente hors ligne (IndexedDB + service worker).
