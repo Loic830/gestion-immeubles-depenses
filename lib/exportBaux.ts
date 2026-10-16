@@ -131,7 +131,7 @@ export async function exporterDossierPreteur(
   const entete = feuille.getRow(4);
   colonnes.forEach((c, i) => (entete.getCell(i + 1).value = c.titre));
   entete.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  entete.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E79" } };
+  entete.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B4D34" } };
 
   let premiere = 5;
   let rangee = premiere;
@@ -158,7 +158,7 @@ export async function exporterDossierPreteur(
     const fichiers = fichiersParBail.get(b.id) ?? [];
     if (fichiers.length) {
       r.getCell(11).value = { text: fichiers.length > 1 ? `${fichiers[0]} (+${fichiers.length - 1})` : fichiers[0], hyperlink: `baux/${fichiers[0]}` };
-      r.getCell(11).font = { color: { argb: "FF1F4E79" }, underline: true };
+      r.getCell(11).font = { color: { argb: "FF1B4D34" }, underline: true };
     } else {
       r.getCell(11).value = "Copie à ajouter";
       r.getCell(11).font = { italic: true, color: { argb: "FF999999" } };

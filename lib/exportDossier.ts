@@ -173,7 +173,7 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
         text: fichiers.length > 1 ? `${premier.nom} (+${fichiers.length - 1} page${fichiers.length > 2 ? "s" : ""})` : premier.nom,
         hyperlink: `recus/${premier.nom}`,
       };
-      cellule.font = { color: { argb: "FF1F4E79" }, underline: true };
+      cellule.font = { color: { argb: "FF1B4D34" }, underline: true };
     } else {
       cellule.value = "Aucun reçu";
       cellule.font = { color: { argb: "FF999999" }, italic: true };
@@ -188,7 +188,7 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
 
   const entete = feuille.getRow(1);
   entete.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  entete.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E79" } };
+  entete.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B4D34" } };
   feuille.autoFilter = { from: { row: 1, column: 1 }, to: { row: derniere, column: feuille.columnCount } };
 
   // Onglet résumé par catégorie (utile pour le formulaire T776 / TP-128)

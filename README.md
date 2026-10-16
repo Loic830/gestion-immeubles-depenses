@@ -1,7 +1,7 @@
 # Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.6 : Module 1 complet (dépenses) + début du Module 2 : barre d'onglets, baux et locataires, loyers dus générés automatiquement.
+Version 0.7 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -37,7 +37,8 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 
 | Fichier | Rôle |
 | --- | --- |
-| `components/BarreOnglets.tsx` | Barre d'onglets du bas (Dépenses · Baux ; Loyers en v0.7) |
+| `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Dépenses · Baux |
+| `app/loyers/page.tsx` | Loyers du mois par immeuble, retards (tous mois), feuille « Reçu » / partiel / annulation |
 | `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
 | `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
@@ -139,6 +140,21 @@ dossier_depenses_2026-01-01_2026-12-31.zip
   par ligne, vacants inclus, loyer + extras, totaux mensuel et annuel, lien vers la copie du bail)
   et le dossier `baux/` (ex. `Gauthier_6_Tremblay_p1.jpg`). Décompresser avant d'ouvrir l'Excel.
 
+## Loyers (v0.7)
+
+- Onglet « Loyers » : mois courant par défaut, flèches ‹ › pour changer de mois (gardé dans l'adresse `?m=AAAA-MM`).
+- En haut : encaissé sur dû, avec barre de progression ; section « En retard » (tous mois confondus,
+  du plus ancien au plus récent) avec bouton « Appeler ».
+- Toucher un logement ouvre une feuille : montant (solde restant), mode (celui du bail), date reçue, référence.
+  Montant = solde → bouton « Reçu » ; sinon « Enregistrer ce montant » (paiement partiel).
+- Les paiements déjà enregistrés sont listés dans la feuille ; « Annuler » = suppression douce (erreur de saisie).
+- Paiements insérés directement dans `paiements` (statut `recu`) ; `v_soldes` calcule soldes et retards.
+
+## Thème
+
+- Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
+- Icônes et manifeste fournis par Loïc (dossier `public/`, icône « maskable » incluse).
+
 ## Limites connues
 
 - Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
@@ -147,7 +163,6 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.7 : onglet Loyers — loyers du mois, « Reçu » en un geste, paiements partiels, retards.
-2. v0.8 : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
-3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
-4. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.
+1. v0.8 : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+2. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
+3. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.
