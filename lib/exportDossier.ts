@@ -183,7 +183,9 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
   // Ligne de total
   const derniere = feuille.rowCount;
   const total = feuille.addRow({ fournisseur: "TOTAL" });
-  total.getCell("montant").value = { formula: `SUM(I2:I${derniere})` };
+  // « result » : affiché tel quel par l'aperçu iPhone, qui n'évalue pas les formules.
+  const totalCents = lignes.reduce((t, l) => t + (l.montant_cents ?? 0), 0);
+  total.getCell("montant").value = { formula: `SUM(I2:I${derniere})`, result: totalCents / 100 };
   total.font = { bold: true };
 
   const entete = feuille.getRow(1);
@@ -212,7 +214,7 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
     .sort((a, b) => b.cents - a.cents)
     .forEach((g) => resume.addRow({ cat: g.cat, t776: g.t776, nature: g.nature, total: g.cents / 100 }));
   const totalResume = resume.addRow({ cat: "TOTAL" });
-  totalResume.getCell("total").value = { formula: `SUM(D2:D${resume.rowCount - 1})` };
+  totalResume.getCell("total").value = { formula: `SUM(D2:D${resume.rowCount - 1})`, result: totalCents / 100 };
   totalResume.font = { bold: true };
   resume.getRow(1).font = { bold: true };
 

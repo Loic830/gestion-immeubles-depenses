@@ -136,6 +136,9 @@ export async function exporterDossierPreteur(
   let premiere = 5;
   let rangee = premiere;
   let occupes = 0;
+  // Résultats précalculés : l'aperçu de l'iPhone (et Google Sheets à l'import) n'évalue pas
+  // les formules ; sans « result », les cellules de total paraissent vides.
+  const sommes = { 5: 0, 6: 0, 7: 0, 8: 0 } as Record<number, number>;
   for (const l of logements) {
     const b = bailDe(l.id);
     const r = feuille.getRow(rangee++);
@@ -151,8 +154,13 @@ export async function exporterDossierPreteur(
     r.getCell(4).value = b.date_fin ? versDate(b.date_fin) : "Indéterminée";
     r.getCell(5).value = b.loyer_cents / 100;
     r.getCell(6).value = b.extras_cents / 100;
-    r.getCell(7).value = { formula: `E${r.number}+F${r.number}` };
-    r.getCell(8).value = { formula: `G${r.number}*12` };
+    const mensuelCents = b.loyer_cents + b.extras_cents;
+    r.getCell(7).value = { formula: `E${r.number}+F${r.number}`, result: mensuelCents / 100 };
+    r.getCell(8).value = { formula: `G${r.number}*12`, result: (mensuelCents * 12) / 100 };
+    sommes[5] += b.loyer_cents;
+    sommes[6] += b.extras_cents;
+    sommes[7] += mensuelCents;
+    sommes[8] += mensuelCents * 12;
     r.getCell(9).value = MODES[b.mode_paiement] ?? b.mode_paiement;
     r.getCell(10).value = b.inclusions ?? "";
     const fichiers = fichiersParBail.get(b.id) ?? [];
@@ -170,7 +178,7 @@ export async function exporterDossierPreteur(
   total.getCell(2).value = `${occupes} / ${logements.length} logements occupés`;
   for (const c of [5, 6, 7, 8]) {
     const lettre = String.fromCharCode(64 + c);
-    total.getCell(c).value = { formula: `SUM(${lettre}${premiere}:${lettre}${derniere})` };
+    total.getCell(c).value = { formula: `SUM(${lettre}${premiere}:${lettre}${derniere})`, result: sommes[c] / 100 };
   }
   total.font = { bold: true };
 
