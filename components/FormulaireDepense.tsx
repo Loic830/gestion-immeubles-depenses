@@ -207,11 +207,13 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
 
   function activerRepartition() {
     setErreur(null);
-    const autres = immeubles.filter((i) => i.id !== immeubleId);
-    setLignesForm([
-      nouvelleLigne({ immeubleId, logementId, montantSaisi: totalSaisi }),
-      nouvelleLigne({ immeubleId: autres[0]?.id ?? "" }),
-    ]);
+    // Une ligne par immeuble, chacun présélectionné ; on retire au besoin les lignes inutiles.
+    setLignesForm(
+      immeubles.map((im) => nouvelleLigne({
+        immeubleId: im.id,
+        logementId: im.id === immeubleId ? logementId : "",
+      }))
+    );
     setRepartie(true);
   }
 
@@ -227,7 +229,12 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
   }
 
   function majLigne(cle: string, patch: Partial<LigneForm>) {
-    setLignesForm((avant) => avant.map((l) => (l.cle === cle ? { ...l, ...patch } : l)));
+    setLignesForm((avant) => avant.map((l) => {
+      if (l.cle === cle) return { ...l, ...patch };
+      // Une catégorie choisie sur une ligne remplit aussi les lignes qui n'en ont pas encore
+      if (patch.categorieId && !l.categorieId) return { ...l, categorieId: patch.categorieId };
+      return l;
+    }));
   }
 
   function appliquerParts(parts: number[]) {
