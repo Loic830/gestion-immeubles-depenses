@@ -1,7 +1,7 @@
 # Gestion des immeubles — Module 1 (saisie des dépenses)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.3 : saisie rapide avec photo du reçu, détail et modification, filtres (période, immeubles, catégorie, statut), totaux par catégorie, export CSV.
+Version 0.4 : saisie rapide avec photo du reçu, détail et modification, filtres, totaux par catégorie, export CSV et dossier comptable (Excel + reçus en ZIP).
 
 ## 1. Base de données
 
@@ -38,6 +38,7 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
 | `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
 | `lib/periodes.ts` | Calcul des périodes (mois, trimestre, année, dates précises) |
+| `lib/exportDossier.ts` | Dossier comptable ZIP : depenses.xlsx (liens vers les reçus, onglet par catégorie) + dossier recus/ |
 | `lib/csv.ts` | Export CSV pour Excel en français (séparateur « ; », virgule décimale, UTF-8 avec BOM) |
 | `app/nouvelle/page.tsx` | Nouvelle dépense (utilise le formulaire partagé) |
 | `app/depense/[id]/page.tsx` | Détail : reçus (URL signées 10 min), plein écran, téléchargement, suppression douce |
@@ -80,6 +81,27 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 - Totaux : total de la sélection, part en capital, répartition par catégorie principale.
 - « Exporter en CSV » : une ligne par ligne de dépense, avec la ligne T776, prête pour Excel.
 - Plafond : 1000 lignes par affichage (limite Supabase par défaut) ; un avis s'affiche si atteint.
+
+## Dossier comptable (v0.4)
+
+Bouton « Exporter Excel + reçus (ZIP) » : exporte la sélection affichée (mêmes filtres).
+
+```
+dossier_depenses_2026-01-01_2026-12-31.zip
+├── depenses.xlsx          ← onglet « Dépenses » (lien cliquable vers chaque reçu, total)
+│                             onglet « Par catégorie » (totaux par ligne T776, courante / capital)
+├── recus/
+│   ├── 2026-10-16_Simplex_384,13.jpg
+│   ├── 2026-07-10_BMR_13,03_p1.jpg   ← facture de plusieurs pages
+│   └── ...
+├── LISEZMOI.txt
+└── RECUS_MANQUANTS.txt    ← seulement si un fichier n'a pas pu être téléchargé
+```
+
+- Les liens sont relatifs : **décompresser le ZIP** avant d'ouvrir depenses.xlsx.
+- Les noms de fichiers sont sans accents ni caractères spéciaux (compatibles Windows, Mac, iPhone).
+- ExcelJS et JSZip sont chargés seulement au clic (l'application reste légère).
+- Tout se fait dans le navigateur : à privilégier sur ordinateur pour une année complète.
 
 ## Limites connues
 

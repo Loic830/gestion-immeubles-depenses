@@ -8,6 +8,7 @@ import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { PERIODES, bornesPeriode, type CodePeriode } from "@/lib/periodes";
 import { genererCsv, montantCsv, telechargerFichier } from "@/lib/csv";
+import { exporterDossier } from "@/lib/exportDossier";
 
 type Ligne = {
   ligne_id: string;
@@ -68,6 +69,8 @@ function ListeDepenses() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
   const [filtresOuverts, setFiltresOuverts] = useState(false);
+  const [exportEnCours, setExportEnCours] = useState<string | null>(null);
+  const [exportResultat, setExportResultat] = useState<string | null>(null);
 
   function changerFiltre(modifs: Record<string, string>) {
     const p = new URLSearchParams(params.toString());
@@ -155,6 +158,24 @@ function ListeDepenses() {
     const { debut, fin } = bornesPeriode(periode, du, au);
     const nom = `depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.csv`;
     telechargerFichier(genererCsv(entetes, rangs), nom);
+  }
+
+  async function exporterAvecRecus() {
+    setExportResultat(null);
+    setErreur(null);
+    const { debut, fin } = bornesPeriode(periode, du, au);
+    try {
+      const r = await exporterDossier(lignes, `dossier_depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.zip`, setExportEnCours);
+      setExportResultat(
+        r.manquants
+          ? `Dossier créé : ${r.nbRecus} reçus, ${r.manquants} introuvable(s) (voir RECUS_MANQUANTS.txt).`
+          : `Dossier créé avec ${r.nbRecus} reçu(s). Décompresse le ZIP avant d'ouvrir le fichier Excel.`
+      );
+    } catch (e) {
+      setErreur(`Export impossible : ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExportEnCours(null);
+    }
   }
 
   if (!pret || !session) return null;
@@ -252,10 +273,17 @@ function ListeDepenses() {
           </div>
         )}
         {lignes.length > 0 && (
-          <button className="bouton plein" style={{ marginTop: 12 }} onClick={exporter}>
-            Exporter en CSV (Excel)
-          </button>
+          <>
+            <button className="bouton principal plein" style={{ marginTop: 12 }}
+                    onClick={exporterAvecRecus} disabled={exportEnCours !== null}>
+              {exportEnCours ?? "Exporter Excel + reçus (ZIP)"}
+            </button>
+            <button className="bouton plein" style={{ marginTop: 8 }} onClick={exporter} disabled={exportEnCours !== null}>
+              Exporter en CSV seulement
+            </button>
+          </>
         )}
+        {exportResultat && <p className="aide" style={{ color: "var(--succes)" }}>{exportResultat}</p>}
         {lignes.length >= LIMITE && (
           <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : resserre la période.</p>
         )}
