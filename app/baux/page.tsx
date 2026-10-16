@@ -7,8 +7,9 @@ import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, triNumero } from "@/lib/dates";
 import BarreOnglets from "@/components/BarreOnglets";
+import { exporterDossierPreteur } from "@/lib/exportBaux";
 
-type Immeuble = { id: string; nom: string };
+type Immeuble = { id: string; nom: string; adresse: string | null };
 type Logement = { id: string; immeuble_id: string; numero: string };
 type Bail = {
   id: string;
@@ -31,6 +32,26 @@ export default function PageBaux() {
   const [baux, setBaux] = useState<Bail[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [exportEnCours, setExportEnCours] = useState<{ id: string; etape: string } | null>(null);
+  const [exportResultat, setExportResultat] = useState<{ id: string; texte: string } | null>(null);
+
+  async function dossierPreteur(im: Immeuble) {
+    setErreur(null);
+    setExportResultat(null);
+    try {
+      const r = await exporterDossierPreteur(im, (etape) => setExportEnCours({ id: im.id, etape }));
+      setExportResultat({
+        id: im.id,
+        texte: `Dossier créé : ${r.occupes} / ${r.total} logements occupés`
+          + (r.sansCopie ? ` · ${r.sansCopie} bail(s) sans copie` : " · toutes les copies incluses")
+          + (r.manquants ? ` · ${r.manquants} fichier(s) introuvable(s)` : "") + ".",
+      });
+    } catch (e) {
+      setErreur(`Dossier prêteur impossible : ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExportEnCours(null);
+    }
+  }
 
   useEffect(() => {
     if (!session) return;
@@ -38,7 +59,7 @@ export default function PageBaux() {
       // Les baux à durée indéterminée reçoivent leurs prochains loyers dus (sans effet si déjà fait)
       await supabase.rpc("prolonger_echeances");
       const [im, lo, ba] = await Promise.all([
-        supabase.from("immeubles").select("id, nom").is("deleted_at", null).order("nom"),
+        supabase.from("immeubles").select("id, nom, adresse").is("deleted_at", null).order("nom"),
         supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true),
         supabase.from("v_baux")
           .select("id, logement_id, statut, date_debut, date_fin, loyer_cents, extras_cents, locataires, avis_du, avis_au, date_avis_envoye")
@@ -80,7 +101,14 @@ export default function PageBaux() {
 
       {immeubles.map((im) => (
         <section key={im.id}>
-          <h2 className="immeuble-titre">{im.nom}</h2>
+          <div className="entete" style={{ margin: "20px 0 8px" }}>
+            <h2 className="immeuble-titre" style={{ margin: 0 }}>{im.nom}</h2>
+            <button className="bouton" style={{ padding: "6px 12px", fontSize: 15 }}
+                    onClick={() => dossierPreteur(im)} disabled={exportEnCours !== null}>
+              {exportEnCours?.id === im.id ? exportEnCours.etape : "Dossier prêteur"}
+            </button>
+          </div>
+          {exportResultat?.id === im.id && <p className="aide" style={{ color: "var(--succes)" }}>{exportResultat.texte}</p>}
           <div className="carte" style={{ paddingTop: 4, paddingBottom: 4 }}>
             {logements.filter((l) => l.immeuble_id === im.id).map((l) => {
               const actif = baux.find((b) => b.logement_id === l.id && b.statut === "actif");

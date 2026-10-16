@@ -41,6 +41,7 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
 | `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
+| `lib/exportBaux.ts` | Dossier prêteur par immeuble : etat_des_loyers.xlsx (liens vers les baux, totaux mensuel et annuel) + dossier baux/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
 | `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
@@ -132,6 +133,11 @@ dossier_depenses_2026-01-01_2026-12-31.zip
   dus se prolongent à chaque ouverture de l'onglet (`prolonger_echeances`).
 - Deux baux qui se chevauchent sur le même logement sont refusés (contrainte d'exclusion).
 - La suppression d'un bail est réservée aux erreurs de saisie (suppression douce).
+- Fiche du bail : « Photo du bail » (plusieurs pages) ou « Fichier ou PDF » ; fichiers compressés
+  comme les reçus, stockés dans le bucket privé sous `baux/AAAA/MM/`, table `documents` (type `bail`).
+- « Dossier prêteur » (par immeuble, onglet Baux) : ZIP avec `etat_des_loyers.xlsx` (un logement
+  par ligne, vacants inclus, loyer + extras, totaux mensuel et annuel, lien vers la copie du bail)
+  et le dossier `baux/` (ex. `Gauthier_6_Tremblay_p1.jpg`). Décompresser avant d'ouvrir l'Excel.
 
 ## Limites connues
 

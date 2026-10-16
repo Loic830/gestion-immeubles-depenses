@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, BUCKET_RECUS } from "@/lib/supabase";
+import { preparerFichier } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, moisLisible } from "@/lib/dates";
@@ -28,6 +29,7 @@ type Bail = {
 };
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
+type DocumentBail = { id: string; storage_key: string; mime_type: string; date_document: string | null; created_at: string; url: string | null };
 type Solde = { echeance_id: string; mois: string; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
 
 const LIBELLE_MODE = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement automatique", comptant: "Comptant" };
@@ -44,6 +46,54 @@ export default function DetailBail() {
   const [soldes, setSoldes] = useState<Solde[]>([]);
   const [erreur, setErreur] = useState<string | null>(null);
   const [suppression, setSuppression] = useState(false);
+  const [documents, setDocuments] = useState<DocumentBail[]>([]);
+  const [televersement, setTeleversement] = useState<string | null>(null);
+  const champPhoto = useRef<HTMLInputElement>(null);
+  const champFichier = useRef<HTMLInputElement>(null);
+
+  const chargerDocuments = useCallback(async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from("documents")
+      .select("id, storage_key, mime_type, date_document, created_at")
+      .eq("bail_id", id)
+      .eq("type", "bail")
+      .order("created_at");
+    const liste = (data ?? []) as Omit<DocumentBail, "url">[];
+    const urls = liste.length
+      ? (await supabase.storage.from(BUCKET_RECUS).createSignedUrls(liste.map((d) => d.storage_key), 600)).data ?? []
+      : [];
+    setDocuments(liste.map((d) => ({ ...d, url: urls.find((u) => u.path === d.storage_key)?.signedUrl ?? null })));
+  }, [id]);
+
+  async function ajouterDocuments(fichiers: FileList | null) {
+    if (!fichiers || fichiers.length === 0 || !id) return;
+    setErreur(null);
+    try {
+      const liste = Array.from(fichiers);
+      for (let i = 0; i < liste.length; i++) {
+        setTeleversement(`Envoi ${i + 1} / ${liste.length}…`);
+        const f = await preparerFichier(liste[i]);
+        const maintenant = new Date();
+        const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
+        const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
+        const envoi = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
+        if (envoi.error) throw new Error(`Envoi impossible : ${envoi.error.message}`);
+        const { error } = await supabase.from("documents").insert({
+          bail_id: id, type: "bail", storage_key: cle, mime_type: f.mimeType,
+          date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
+        });
+        if (error) throw new Error(error.message);
+      }
+      await chargerDocuments();
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTeleversement(null);
+      if (champPhoto.current) champPhoto.current.value = "";
+      if (champFichier.current) champFichier.current.value = "";
+    }
+  }
 
   useEffect(() => {
     if (!session || !id) return;
@@ -59,8 +109,9 @@ export default function DetailBail() {
       setLocataires(((lo.data ?? []) as unknown as Locataire[]).sort((x, y) => Number(y.principal) - Number(x.principal)));
       setExtras((ex.data ?? []) as Extra[]);
       setSoldes((so.data ?? []) as Solde[]);
+      await chargerDocuments();
     })();
-  }, [session, id]);
+  }, [session, id, chargerDocuments]);
 
   async function supprimer() {
     if (!bail) return;
@@ -137,6 +188,31 @@ export default function DetailBail() {
               {bail.inclusions && (<><dt>Inclusions</dt><dd>{bail.inclusions}</dd></>)}
               {bail.notes && (<><dt>Notes</dt><dd style={{ whiteSpace: "pre-wrap" }}>{bail.notes}</dd></>)}
             </dl>
+          </section>
+
+          <section className="carte">
+            <strong>Bail signé</strong>
+            <p className="aide">Photo ou PDF du bail, pour le dossier du prêteur et les renouvellements.</p>
+            <div className="rangee">
+              <button className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={televersement !== null}>
+                {televersement ?? (documents.length ? "+ Page" : "Photo du bail")}
+              </button>
+              <button className="bouton" onClick={() => champFichier.current?.click()} disabled={televersement !== null}>
+                Fichier ou PDF
+              </button>
+            </div>
+            <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterDocuments(e.target.files)} />
+            <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterDocuments(e.target.files)} />
+            {documents.length > 0 && (
+              <div className="photos">
+                {documents.map((d, i) => (
+                  <button key={d.id} className="vignette" onClick={() => d.url && window.open(d.url, "_blank")}>
+                    {d.mime_type === "application/pdf" || !d.url ? "PDF" : <img src={d.url} alt={`Bail, page ${i + 1}`} />}
+                  </button>
+                ))}
+              </div>
+            )}
+            {documents.length > 0 && <p className="aide">{documents.length} page{documents.length > 1 ? "s" : ""} · toucher pour ouvrir.</p>}
           </section>
 
           {bail.avis_du && (
