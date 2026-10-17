@@ -122,3 +122,29 @@ export function formatKm(km: number | null): string {
   if (km === null) return "—";
   return `${km.toLocaleString("fr-CA", { maximumFractionDigits: 1 })} km`;
 }
+
+// --- Trajets composés de lieux (Maison → Gauthier → Rona → Gauthier → Maison)
+
+/** Clé d'une distance, la même dans les deux sens (comme en base : lieu_a < lieu_b) */
+export function paireLieux(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+export function cleDistance(a: string, b: string): string {
+  return paireLieux(a, b).join("|");
+}
+
+export type Segment = { de: string; vers: string; km: number | null };
+
+/** Découpe les étapes en segments ; total = null tant qu'un segment n'a pas de km */
+export function segmentsTrajet(etapes: string[], distances: Map<string, number>): { segments: Segment[]; total: number | null } {
+  const segments: Segment[] = [];
+  for (let i = 1; i < etapes.length; i++) {
+    const de = etapes[i - 1];
+    const vers = etapes[i];
+    segments.push({ de, vers, km: de === vers ? 0 : distances.get(cleDistance(de, vers)) ?? null });
+  }
+  const total = segments.length && segments.every((s) => s.km !== null)
+    ? Math.round(segments.reduce((t, s) => t + (s.km ?? 0), 0) * 10) / 10
+    : null;
+  return { segments, total };
+}

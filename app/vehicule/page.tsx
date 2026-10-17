@@ -8,6 +8,7 @@ import { aujourdhuiIso, dateLisible } from "@/lib/dates";
 import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { calculerResume, TYPES_FRAIS, MOTIFS, formatKm, type ImmeubleVeh } from "@/lib/vehicule";
 import BarreOnglets from "@/components/BarreOnglets";
+import ConstructeurTrajet, { type TrajetCompose } from "@/components/ConstructeurTrajet";
 
 // Véhicule : journal de bord (km pour les immeubles), frais et relevés du compteur.
 // La part déductible = frais × (km immeubles / km totaux), répartie entre les immeubles.
@@ -59,6 +60,8 @@ export default function PageVehicule() {
   const [motif, setMotif] = useState("");
   const [destination, setDestination] = useState("");
   const [garderFavori, setGarderFavori] = useState(false);
+  const [composer, setComposer] = useState(false);
+  const [etapesCompose, setEtapesCompose] = useState<string[] | null>(null);
 
   // Frais
   const [typeFrais, setTypeFrais] = useState("essence");
@@ -144,6 +147,16 @@ export default function PageVehicule() {
     setMotif(f.motif ?? motif);
     setDestination(f.nom);
     setGarderFavori(false);
+    setEtapesCompose(null);
+  }
+
+  function utiliserCompose(t: TrajetCompose) {
+    setKmTrajet(String(t.km).replace(".", ","));
+    setDestination(t.nom);
+    setImmeubleTrajet(t.immeubleId);
+    setEtapesCompose(t.etapes);
+    setGarderFavori(!favoris.some((f) => f.nom === t.nom));
+    setComposer(false);
   }
 
   async function retirerFavori(f: Favori) {
@@ -164,12 +177,14 @@ export default function PageVehicule() {
     });
     if (!error && garderFavori) {
       const nomFav = destination.trim() || (immeubles.find((i) => i.id === immeubleTrajet)?.nom ?? "Trajet");
-      await supabase.from("trajets_favoris").insert({ nom: nomFav, km, immeuble_id: immeubleTrajet || null, motif: motif.trim() });
+      await supabase.from("trajets_favoris").insert({
+        nom: nomFav, km, immeuble_id: immeubleTrajet || null, motif: motif.trim(), etapes: etapesCompose,
+      });
       await chargerBase();
     }
     setEnvoi(false);
     if (error) return setErreur(error.message);
-    setKmTrajet(""); setDestination(""); setGarderFavori(false);
+    setKmTrajet(""); setDestination(""); setGarderFavori(false); setEtapesCompose(null);
     if (dateTrajet.slice(0, 4) !== String(annee)) setAnnee(Number(dateTrajet.slice(0, 4)));
     else await chargerVehicule();
     confirmer(`Trajet de ${formatKm(km)} inscrit.`);
@@ -360,7 +375,18 @@ export default function PageVehicule() {
 
           {onglet === "trajet" && (
             <section className="carte">
-              {favoris.length > 0 && (
+              {composer ? (
+                <ConstructeurTrajet
+                  onUtiliser={utiliserCompose}
+                  onFavoriCree={async () => { setComposer(false); await chargerBase(); confirmer("Trajet fréquent ajouté."); }}
+                  onFermer={() => setComposer(false)}
+                />
+              ) : (
+                <button type="button" className="bouton plein" style={{ marginBottom: 12 }} onClick={() => setComposer(true)}>
+                  Composer un trajet (Maison → Gauthier → Rona…)
+                </button>
+              )}
+              {!composer && favoris.length > 0 && (
                 <>
                   <strong>Trajets fréquents</strong>
                   <div className="puces">

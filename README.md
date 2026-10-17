@@ -1,7 +1,7 @@
 # Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.1 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -21,6 +21,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
    et `annuler_fin_bail`.
 7. `supabase/007_vehicule.sql` — véhicule : véhicules, relevés du compteur, trajets fréquents,
    journal de bord (déplacements) et frais du véhicule.
+8. `supabase/008_lieux_distances.sql` — lieux (Maison + immeubles, puis Rona, BMR…) et distances
+   entre deux lieux, pour composer des trajets.
 
 ## 2. Lancer en local
 
@@ -50,6 +52,7 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble : etat_des_loyers.xlsx (liens vers les baux, totaux mensuel et annuel) + dossier baux/ |
 | `app/vehicule/page.tsx` | Onglet Véhicule : trajets (favoris, motif), frais (reçu), compteur, résumé du prorata, export |
+| `components/ConstructeurTrajet.tsx` | Composer un trajet par lieux ; distances retenues dans les deux sens |
 | `lib/vehicule.ts` | Calcul du prorata : km immeubles / km totaux, part déductible et répartition par immeuble |
 | `lib/exportVehicule.ts` | Dossier véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais avec liens) + recus/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
@@ -165,6 +168,9 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - Onglet « Véhicule » (4e onglet). Premier usage : nommer le véhicule, puis inscrire le compteur.
 - Trajet : immeuble (ou « Plusieurs »), km aller-retour, date, motif obligatoire (puces ou texte),
   destination ; « Garder comme trajet fréquent » crée un raccourci en un toucher.
+- « Composer un trajet » : toucher les lieux dans l'ordre (Maison → Gauthier → Rona → Gauthier → Maison) ;
+  chaque distance entre deux lieux s'entre une fois et sert ensuite dans les deux sens. « Garder comme fréquent »
+  crée le raccourci sans inscrire de trajet ; « Utiliser maintenant » remplit le formulaire.
 - Frais : montant complet (100 %), type (essence, entretien, assurance, SAAQ, intérêts, location, autre),
   photo du reçu (bucket `recus`, dossier `vehicule/`).
 - Compteur : relevés datés ; début = relevé le plus proche du 1er janvier, fin = le plus proche du 31 décembre
