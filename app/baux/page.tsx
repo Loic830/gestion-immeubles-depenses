@@ -17,6 +17,7 @@ type Bail = {
   statut: "a_venir" | "actif" | "termine";
   date_debut: string;
   date_fin: string | null;
+  date_depart: string | null;
   loyer_cents: number;
   extras_cents: number;
   locataires: string | null;
@@ -62,7 +63,7 @@ export default function PageBaux() {
         supabase.from("immeubles").select("id, nom, adresse").is("deleted_at", null).order("nom"),
         supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true),
         supabase.from("v_baux")
-          .select("id, logement_id, statut, date_debut, date_fin, loyer_cents, extras_cents, locataires, avis_du, avis_au, date_avis_envoye")
+          .select("id, logement_id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, locataires, avis_du, avis_au, date_avis_envoye")
           .in("statut", ["actif", "a_venir"])
           .order("date_debut"),
       ]);
@@ -80,7 +81,7 @@ export default function PageBaux() {
   const auj = aujourdhuiIso();
   const nbOccupes = logements.filter((l) => baux.some((b) => b.logement_id === l.id && b.statut === "actif")).length;
   const loyersMensuels = baux.filter((b) => b.statut === "actif").reduce((s, b) => s + b.loyer_cents + b.extras_cents, 0);
-  const avisAEnvoyer = baux.filter((b) => b.avis_du && !b.date_avis_envoye && b.avis_du <= auj && (b.avis_au ?? "") >= auj).length;
+  const avisAEnvoyer = baux.filter((b) => b.avis_du && !b.date_depart && !b.date_avis_envoye && b.avis_du <= auj && (b.avis_au ?? "") >= auj).length;
 
   return (
     <main className="page avec-onglets">
@@ -126,7 +127,7 @@ export default function PageBaux() {
                   </Link>
                 );
               }
-              const fenetreOuverte = bail.avis_du && !bail.date_avis_envoye && bail.avis_du <= auj && (bail.avis_au ?? "") >= auj;
+              const fenetreOuverte = bail.avis_du && !bail.date_depart && !bail.date_avis_envoye && bail.avis_du <= auj && (bail.avis_au ?? "") >= auj;
               return (
                 <Link key={l.id} href={`/baux/${bail.id}`} className="logement-ligne">
                   <span className="logement-numero">{l.numero}</span>
@@ -134,10 +135,15 @@ export default function PageBaux() {
                     <div className="titre">{bail.locataires ?? "Locataire à préciser"}</div>
                     <div className="sous">
                       {formatCents(bail.loyer_cents + bail.extras_cents)} / mois
-                      {" · "}{bail.date_fin ? `fin ${dateLisible(bail.date_fin)}` : "durée indéterminée"}
+                      {" · "}{bail.date_depart
+                        ? `départ ${dateLisible(bail.date_depart)}`
+                        : bail.date_fin ? `fin ${dateLisible(bail.date_fin)}` : "durée indéterminée"}
                     </div>
                   </div>
                   {!actif && aVenir && <span className="pastille">À venir</span>}
+                  {actif?.date_depart && (aVenir
+                    ? <span className="pastille">Relocation faite</span>
+                    : <span className="pastille vacant">Départ</span>)}
                   {fenetreOuverte && <span className="pastille">Avis TAL</span>}
                 </Link>
               );

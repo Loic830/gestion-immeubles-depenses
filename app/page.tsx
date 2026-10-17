@@ -1,320 +1,342 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, BUCKET_RECUS } from "@/lib/supabase";
+import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
-import { formatCents } from "@/lib/argent";
-import { PERIODES, bornesPeriode, type CodePeriode } from "@/lib/periodes";
-import { genererCsv, montantCsv, telechargerFichier } from "@/lib/csv";
-import { exporterDossier } from "@/lib/exportDossier";
-import BarreOnglets from "@/components/BarreOnglets";
-
-type Ligne = {
-  ligne_id: string;
-  depense_id: string;
-  date_facture: string;
-  statut: "brouillon" | "complete";
-  fournisseur: string | null;
-  immeuble_id: string;
-  immeuble: string;
-  logement: string | null;
-  categorie_id: string | null;
-  categorie: string | null;
-  categorie_parent: string | null;
-  code_fiscal: string | null;
-  nature: "courante" | "capital";
-  montant_cents: number | null;
-  sous_total_cents: number | null;
-  tps_cents: number;
-  tvq_cents: number;
-  total_cents: number | null;
-  mode_paiement: string | null;
-  no_facture: string | null;
-  description: string | null;
-  notes: string | null;
-  nb_pieces: number;
-};
+import { versCents, formatCents } from "@/lib/argent";
+import { finApresMois, prochainPremierJuillet, triNumero, dateLisible, aujourdhuiIso } from "@/lib/dates";
 
 type Immeuble = { id: string; nom: string };
-type Categorie = { id: string; nom: string; parent_id: string | null; ordre: number };
+type Logement = { id: string; immeuble_id: string; numero: string };
+type LocataireExistant = { id: string; prenom: string; nom: string };
+type LocataireForm = { cle: string; existantId: string; prenom: string; nom: string; telephone: string; courriel: string };
+type ExtraForm = { cle: string; libelle: string; montantSaisi: string };
+type Duree = "12" | "autre" | "indeterminee";
+type Mode = "interac" | "cheque" | "prelevement" | "comptant";
 
-const LIMITE = 1000; // plafond par défaut de Supabase par requête
+const MODES: { code: Mode; libelle: string }[] = [
+  { code: "interac", libelle: "Virement Interac" },
+  { code: "cheque", libelle: "Chèques postdatés" },
+  { code: "prelevement", libelle: "Prélèvement" },
+  { code: "comptant", libelle: "Comptant" },
+];
 
-export default function Accueil() {
-  // useSearchParams exige une frontière Suspense avec Next.js 15
+const nouveauLocataire = (): LocataireForm => ({ cle: crypto.randomUUID(), existantId: "", prenom: "", nom: "", telephone: "", courriel: "" });
+
+export default function PageNouveauBail() {
   return (
     <Suspense fallback={null}>
-      <ListeDepenses />
+      <NouveauBail />
     </Suspense>
   );
 }
 
-function ListeDepenses() {
+function NouveauBail() {
   const router = useRouter();
   const params = useSearchParams();
   const { session, pret } = useSession();
 
-  // Filtres, lus dans l'URL (un lien garde ses filtres)
-  const periode = (params.get("p") as CodePeriode) || "annee";
-  const du = params.get("du") ?? "";
-  const au = params.get("au") ?? "";
-  const immeublesChoisis = useMemo(() => (params.get("im") ?? "").split(",").filter(Boolean), [params]);
-  const categorieChoisie = params.get("cat") ?? "";
-  const statutChoisi = params.get("st") ?? "";
-
   const [immeubles, setImmeubles] = useState<Immeuble[]>([]);
-  const [categories, setCategories] = useState<Categorie[]>([]);
-  const [lignes, setLignes] = useState<Ligne[]>([]);
-  const [chargement, setChargement] = useState(true);
+  const [logements, setLogements] = useState<Logement[]>([]);
+  const [existants, setExistants] = useState<LocataireExistant[]>([]);
+
+  const [logementId, setLogementId] = useState(params.get("logement") ?? "");
+  const [locataires, setLocataires] = useState<LocataireForm[]>([nouveauLocataire()]);
+  const [dateDebut, setDateDebut] = useState(prochainPremierJuillet());
+  const [duree, setDuree] = useState<Duree>("12");
+  const [dateFinAutre, setDateFinAutre] = useState("");
+  const [loyerSaisi, setLoyerSaisi] = useState("");
+  const [jourEcheance, setJourEcheance] = useState("1");
+  const [mode, setMode] = useState<Mode>("interac");
+  const [extras, setExtras] = useState<ExtraForm[]>([]);
+  const [inclusions, setInclusions] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const [pages, setPages] = useState<FichierPrepare[]>([]);
+  const [traitement, setTraitement] = useState(false);
+  const champPhoto = useRef<HTMLInputElement>(null);
+  const champFichier = useRef<HTMLInputElement>(null);
+
+  const [envoi, setEnvoi] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [filtresOuverts, setFiltresOuverts] = useState(false);
-  const [exportEnCours, setExportEnCours] = useState<string | null>(null);
-  const [exportResultat, setExportResultat] = useState<string | null>(null);
 
-  function changerFiltre(modifs: Record<string, string>) {
-    const p = new URLSearchParams(params.toString());
-    for (const [k, v] of Object.entries(modifs)) {
-      if (v) p.set(k, v); else p.delete(k);
-    }
-    router.replace(`/?${p.toString()}`, { scroll: false });
-  }
-
-  function basculerImmeuble(id: string) {
-    const actuels = new Set(immeublesChoisis);
-    if (actuels.has(id)) actuels.delete(id); else actuels.add(id);
-    changerFiltre({ im: Array.from(actuels).join(",") });
-  }
-
-  // Listes de référence pour les filtres
   useEffect(() => {
     if (!session) return;
     (async () => {
-      const [im, ca] = await Promise.all([
+      const [im, lo, loc] = await Promise.all([
         supabase.from("immeubles").select("id, nom").is("deleted_at", null).order("nom"),
-        supabase.from("categories").select("id, nom, parent_id, ordre").is("deleted_at", null).order("ordre"),
+        supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true),
+        supabase.from("locataires").select("id, prenom, nom").is("deleted_at", null).order("nom"),
       ]);
       setImmeubles((im.data ?? []) as Immeuble[]);
-      setCategories((ca.data ?? []) as Categorie[]);
+      setLogements(((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero)));
+      setExistants((loc.data ?? []) as LocataireExistant[]);
     })();
   }, [session]);
 
-  // Données filtrées
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
-      setChargement(true);
-      setErreur(null);
-      const { debut, fin } = bornesPeriode(periode, du, au);
-      let q = supabase
-        .from("v_depenses_detail")
-        .select("*")
-        .order("date_facture", { ascending: false })
-        .limit(LIMITE);
-      if (debut) q = q.gte("date_facture", debut);
-      if (fin) q = q.lte("date_facture", fin);
-      if (immeublesChoisis.length) q = q.in("immeuble_id", immeublesChoisis);
-      if (categorieChoisie) {
-        // Une catégorie principale inclut ses sous-catégories
-        const ids = [categorieChoisie, ...categories.filter((c) => c.parent_id === categorieChoisie).map((c) => c.id)];
-        q = q.in("categorie_id", ids);
-      }
-      if (statutChoisi) q = q.eq("statut", statutChoisi);
-      const { data, error } = await q;
-      if (error) setErreur(error.message);
-      else setLignes((data ?? []) as Ligne[]);
-      setChargement(false);
-    })();
-  }, [session, periode, du, au, immeublesChoisis, categorieChoisie, statutChoisi, categories]);
+  const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
+  const loyerCents = versCents(loyerSaisi);
+  const extrasCents = extras.reduce((s, e) => s + (versCents(e.montantSaisi) ?? 0), 0);
 
-  // Totaux
-  const total = lignes.reduce((s, l) => s + (l.montant_cents ?? 0), 0);
-  const totalCapital = lignes.filter((l) => l.nature === "capital").reduce((s, l) => s + (l.montant_cents ?? 0), 0);
-  const nbBrouillons = new Set(lignes.filter((l) => l.statut === "brouillon").map((l) => l.depense_id)).size;
-  const parCategorie = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const l of lignes) {
-      const cle = l.categorie_parent ?? l.categorie ?? "À préciser";
-      m.set(cle, (m.get(cle) ?? 0) + (l.montant_cents ?? 0));
+  async function ajouterPages(liste: FileList | null) {
+    if (!liste || liste.length === 0) return;
+    setErreur(null);
+    setTraitement(true);
+    try {
+      const prepares: FichierPrepare[] = [];
+      for (const f of Array.from(liste)) prepares.push(await preparerFichier(f));
+      setPages((avant) => [...avant, ...prepares]);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Erreur pendant le traitement de la photo.");
+    } finally {
+      setTraitement(false);
+      if (champPhoto.current) champPhoto.current.value = "";
+      if (champFichier.current) champFichier.current.value = "";
     }
-    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
-  }, [lignes]);
-
-  const libellePeriode = PERIODES.find((p) => p.code === periode)?.libelle ?? "";
-  const nbFiltres = (immeublesChoisis.length ? 1 : 0) + (categorieChoisie ? 1 : 0) + (statutChoisi ? 1 : 0);
-
-  function exporter() {
-    const entetes = [
-      "Date", "Fournisseur", "Immeuble", "Logement", "Catégorie", "Catégorie principale", "Ligne T776",
-      "Nature", "Montant", "Avant taxes", "TPS", "TVQ", "Total facture", "Paiement", "No facture",
-      "Statut", "Description", "Notes", "Nb reçus",
-    ];
-    const rangs = lignes.map((l) => [
-      l.date_facture, l.fournisseur, l.immeuble, l.logement, l.categorie, l.categorie_parent ?? l.categorie,
-      l.code_fiscal, l.nature, montantCsv(l.montant_cents), montantCsv(l.sous_total_cents),
-      montantCsv(l.tps_cents), montantCsv(l.tvq_cents), montantCsv(l.total_cents), l.mode_paiement,
-      l.no_facture, l.statut, l.description, l.notes, l.nb_pieces,
-    ]);
-    const { debut, fin } = bornesPeriode(periode, du, au);
-    const nom = `depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.csv`;
-    telechargerFichier(genererCsv(entetes, rangs), nom);
   }
 
-  async function exporterAvecRecus() {
-    setExportResultat(null);
-    setErreur(null);
-    const { debut, fin } = bornesPeriode(periode, du, au);
-    try {
-      const r = await exporterDossier(lignes, `dossier_depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.zip`, setExportEnCours);
-      setExportResultat(
-        r.manquants
-          ? `Dossier créé : ${r.nbRecus} reçus, ${r.manquants} introuvable(s) (voir RECUS_MANQUANTS.txt).`
-          : `Dossier créé avec ${r.nbRecus} reçu(s). Décompresse le ZIP avant d'ouvrir le fichier Excel.`
-      );
-    } catch (e) {
-      setErreur(`Export impossible : ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setExportEnCours(null);
+  function retirerPage(i: number) {
+    setPages((avant) => {
+      const copie = [...avant];
+      const [retiree] = copie.splice(i, 1);
+      if (retiree?.apercuUrl) URL.revokeObjectURL(retiree.apercuUrl);
+      return copie;
+    });
+  }
+
+  /** Envoie les pages du bail une fois le bail créé ; retourne le nombre d'échecs. */
+  async function televerserPages(bailId: string): Promise<number> {
+    let echecs = 0;
+    for (let i = 0; i < pages.length; i++) {
+      setEnvoi(`Envoi du bail ${i + 1} / ${pages.length}…`);
+      const f = pages[i];
+      const maintenant = new Date();
+      const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
+      const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
+      const envoiFichier = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
+      if (envoiFichier.error) { echecs++; continue; }
+      const { error } = await supabase.from("documents").insert({
+        bail_id: bailId, type: "bail", storage_key: cle, mime_type: f.mimeType,
+        date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
+      });
+      if (error) echecs++;
     }
+    return echecs;
+  }
+
+  function majLocataire(cle: string, patch: Partial<LocataireForm>) {
+    setLocataires((avant) => avant.map((l) => (l.cle === cle ? { ...l, ...patch } : l)));
+  }
+  function majExtra(cle: string, patch: Partial<ExtraForm>) {
+    setExtras((avant) => avant.map((e) => (e.cle === cle ? { ...e, ...patch } : e)));
+  }
+
+  async function enregistrer() {
+    setErreur(null);
+    if (!logementId) return setErreur("Choisis le logement.");
+    if (!dateDebut) return setErreur("Entre la date de début.");
+    if (duree === "autre" && !dateFinAutre) return setErreur("Entre la date de fin.");
+    if (dateFin && dateFin < dateDebut) return setErreur("La date de fin est avant la date de début.");
+    if (loyerCents === null) return setErreur("Entre le loyer mensuel (ex. 950,00).");
+    const locs = locataires.filter((l) => l.existantId || l.prenom.trim() || l.nom.trim());
+    if (locs.length === 0) return setErreur("Ajoute au moins un locataire.");
+    if (locs.some((l) => !l.existantId && (!l.prenom.trim() || !l.nom.trim()))) return setErreur("Chaque nouveau locataire a besoin d'un prénom et d'un nom.");
+    const ext = extras.filter((e) => e.libelle.trim() || e.montantSaisi.trim());
+    if (ext.some((e) => !e.libelle.trim() || versCents(e.montantSaisi) === null)) return setErreur("Chaque extra a besoin d'un libellé et d'un montant.");
+
+    setEnvoi("Enregistrement…");
+    const { data, error } = await supabase.rpc("creer_bail", {
+      p: {
+        logement_id: logementId,
+        date_debut: dateDebut,
+        date_fin: dateFin || null,
+        loyer_cents: loyerCents,
+        jour_echeance: Number(jourEcheance) || 1,
+        mode_paiement: mode,
+        inclusions: inclusions || null,
+        notes: notes || null,
+        locataires: locs.map((l) => l.existantId
+          ? { id: l.existantId }
+          : { prenom: l.prenom, nom: l.nom, telephone: l.telephone || null, courriel: l.courriel || null }),
+        extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: versCents(e.montantSaisi) })),
+      },
+    });
+    if (error) {
+      setEnvoi(null);
+      setErreur(error.message.includes("baux_sans_chevauchement")
+        ? "Ce logement a déjà un bail sur ces dates. Vérifie les dates ou termine l'ancien bail."
+        : error.message);
+      return;
+    }
+    const bailId = data as string;
+    if (pages.length) {
+      const echecs = await televerserPages(bailId);
+      if (echecs) window.alert(`Le bail est enregistré, mais ${echecs} page(s) n'ont pas pu être envoyées. Ajoute-les depuis la fiche du bail.`);
+    }
+    router.replace(`/baux/${bailId}`);
   }
 
   if (!pret || !session) return null;
 
+  const logement = logements.find((l) => l.id === logementId);
+  const immeubleDuLogement = immeubles.find((i) => i.id === logement?.immeuble_id);
+
   return (
-    <main className="page avec-onglets">
+    <main className="page">
       <div className="entete">
-        <h1>Dépenses</h1>
-        <button className="bouton" onClick={() => supabase.auth.signOut()}>Déconnexion</button>
+        <h1>Nouveau bail</h1>
+        <Link href="/baux" className="bouton">Annuler</Link>
       </div>
-
-      {/* Filtres */}
-      <section className="carte">
-        <select value={periode} onChange={(e) => changerFiltre({ p: e.target.value, du: "", au: "" })} aria-label="Période">
-          {PERIODES.map((p) => <option key={p.code} value={p.code}>{p.libelle}</option>)}
-        </select>
-        {periode === "perso" && (
-          <div className="rangee" style={{ marginTop: 8 }}>
-            <input type="date" value={du} onChange={(e) => changerFiltre({ du: e.target.value })} aria-label="Du" />
-            <input type="date" value={au} onChange={(e) => changerFiltre({ au: e.target.value })} aria-label="Au" />
-          </div>
-        )}
-
-        <button className="lien-filtres" onClick={() => setFiltresOuverts(!filtresOuverts)}>
-          {filtresOuverts ? "▾" : "▸"} Filtres{nbFiltres ? ` (${nbFiltres})` : ""}
-        </button>
-
-        {filtresOuverts && (
-          <>
-            <label>Immeubles</label>
-            <div className="choix">
-              {immeubles.map((im) => (
-                <button key={im.id} type="button" className={immeublesChoisis.includes(im.id) ? "actif" : ""}
-                        onClick={() => basculerImmeuble(im.id)}>
-                  {im.nom}
-                </button>
-              ))}
-            </div>
-
-            <label htmlFor="f-cat">Catégorie</label>
-            <select id="f-cat" value={categorieChoisie} onChange={(e) => changerFiltre({ cat: e.target.value })}>
-              <option value="">Toutes</option>
-              {categories.filter((c) => !c.parent_id).map((p) => {
-                const enfants = categories.filter((c) => c.parent_id === p.id);
-                return enfants.length === 0 ? (
-                  <option key={p.id} value={p.id}>{p.nom}</option>
-                ) : (
-                  <optgroup key={p.id} label={p.nom}>
-                    <option value={p.id}>{p.nom} (tout)</option>
-                    {enfants.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
-                  </optgroup>
-                );
-              })}
-            </select>
-
-            <label htmlFor="f-st">Statut</label>
-            <select id="f-st" value={statutChoisi} onChange={(e) => changerFiltre({ st: e.target.value })}>
-              <option value="">Tous</option>
-              <option value="complete">Complètes</option>
-              <option value="brouillon">Brouillons à compléter</option>
-            </select>
-
-            {nbFiltres > 0 && (
-              <button className="bouton plein" style={{ marginTop: 12 }}
-                      onClick={() => changerFiltre({ im: "", cat: "", st: "" })}>
-                Effacer les filtres
-              </button>
-            )}
-          </>
-        )}
-      </section>
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      {/* Totaux */}
+      {/* Logement */}
       <section className="carte">
-        <div className="total-periode">
-          {libellePeriode} : <strong>{formatCents(total)}</strong>
-          {nbBrouillons > 0 && <> · <span className="pastille">{nbBrouillons} à compléter</span></>}
+        <label htmlFor="logement">Logement</label>
+        <select id="logement" value={logementId} onChange={(e) => setLogementId(e.target.value)}>
+          <option value="">— Choisir —</option>
+          {immeubles.map((im) => (
+            <optgroup key={im.id} label={im.nom}>
+              {logements.filter((l) => l.immeuble_id === im.id).map((l) => (
+                <option key={l.id} value={l.id}>{im.nom} · {l.numero}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {logement && <p className="aide">{immeubleDuLogement?.nom} · logement {logement.numero}</p>}
+      </section>
+
+      {/* Locataires */}
+      <section className="carte">
+        <strong>Locataires</strong>
+        {locataires.map((l, i) => (
+          <div key={l.cle} className={i > 0 ? "bloc-locataire" : ""} style={i === 0 ? { marginTop: 8 } : undefined}>
+            <div className="entete" style={{ margin: "0 0 6px" }}>
+              <span className="aide" style={{ margin: 0 }}>{i === 0 ? "Locataire principal" : `Colocataire ${i}`}</span>
+              {locataires.length > 1 && (
+                <button type="button" className="lien-retirer" onClick={() => setLocataires((a) => a.filter((x) => x.cle !== l.cle))}>Retirer</button>
+              )}
+            </div>
+            {existants.length > 0 && (
+              <select value={l.existantId} onChange={(e) => majLocataire(l.cle, { existantId: e.target.value })} aria-label="Locataire déjà connu">
+                <option value="">Nouveau locataire</option>
+                {existants.map((x) => <option key={x.id} value={x.id}>{x.prenom} {x.nom}</option>)}
+              </select>
+            )}
+            {!l.existantId && (
+              <>
+                <div className="rangee" style={{ marginTop: 8 }}>
+                  <input placeholder="Prénom" autoComplete="off" value={l.prenom} onChange={(e) => majLocataire(l.cle, { prenom: e.target.value })} />
+                  <input placeholder="Nom" autoComplete="off" value={l.nom} onChange={(e) => majLocataire(l.cle, { nom: e.target.value })} />
+                </div>
+                <div className="rangee" style={{ marginTop: 8 }}>
+                  <input placeholder="Téléphone" type="tel" inputMode="tel" autoComplete="off" value={l.telephone} onChange={(e) => majLocataire(l.cle, { telephone: e.target.value })} />
+                  <input placeholder="Courriel" type="email" autoComplete="off" value={l.courriel} onChange={(e) => majLocataire(l.cle, { courriel: e.target.value })} />
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+        <button type="button" className="lien-filtres" onClick={() => setLocataires((a) => [...a, nouveauLocataire()])}>+ Ajouter un colocataire</button>
+      </section>
+
+      {/* Durée */}
+      <section className="carte">
+        <label htmlFor="debut">Début du bail</label>
+        <input id="debut" type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
+
+        <label>Durée</label>
+        <div className="choix">
+          <button type="button" className={duree === "12" ? "actif" : ""} onClick={() => setDuree("12")}>12 mois</button>
+          <button type="button" className={duree === "autre" ? "actif" : ""} onClick={() => setDuree("autre")}>Autre</button>
+          <button type="button" className={duree === "indeterminee" ? "actif" : ""} onClick={() => setDuree("indeterminee")}>Indéterminée</button>
         </div>
-        {totalCapital > 0 && (
-          <p className="aide">Dont {formatCents(totalCapital)} en dépenses en capital (amortissables).</p>
+        {duree === "autre" && (
+          <>
+            <label htmlFor="fin">Fin du bail</label>
+            <input id="fin" type="date" value={dateFinAutre} onChange={(e) => setDateFinAutre(e.target.value)} />
+          </>
         )}
-        {parCategorie.length > 1 && (
-          <div className="repartition">
-            {parCategorie.map(([nom, cents]) => (
-              <div className="repartition-ligne" key={nom}>
-                <span>{nom}</span>
-                <span className="repartition-barre">
-                  <span style={{ width: `${total ? Math.max(2, (cents / total) * 100) : 0}%` }} />
-                </span>
-                <strong>{formatCents(cents)}</strong>
+        {duree === "12" && dateFin && <p className="aide">Fin le {dateLisible(dateFin)}.</p>}
+        {duree === "indeterminee" && <p className="aide">Les loyers dus se prolongent automatiquement chaque mois.</p>}
+      </section>
+
+      {/* Loyer */}
+      <section className="carte">
+        <label htmlFor="loyer">Loyer mensuel</label>
+        <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
+
+        <label>Extras facturés chaque mois</label>
+        {extras.map((e) => (
+          <div className="rangee" key={e.cle} style={{ marginBottom: 8, alignItems: "center" }}>
+            <input placeholder="ex. Stationnement" value={e.libelle} onChange={(ev) => majExtra(e.cle, { libelle: ev.target.value })} />
+            <input placeholder="Montant" inputMode="decimal" value={e.montantSaisi} onChange={(ev) => majExtra(e.cle, { montantSaisi: ev.target.value })} />
+            <button type="button" className="lien-retirer" style={{ flex: "0 0 auto" }} onClick={() => setExtras((a) => a.filter((x) => x.cle !== e.cle))} aria-label="Retirer l'extra">×</button>
+          </div>
+        ))}
+        <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
+                onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "" }])}>
+          + Ajouter un extra
+        </button>
+        {loyerCents !== null && (
+          <p className="aide"><strong>Total dû chaque mois : {formatCents(loyerCents + extrasCents)}</strong></p>
+        )}
+
+        <label>Mode de paiement</label>
+        <div className="choix-2">
+          {MODES.map((m) => (
+            <button key={m.code} type="button" className={mode === m.code ? "actif" : ""} onClick={() => setMode(m.code)}>{m.libelle}</button>
+          ))}
+        </div>
+
+        <label htmlFor="jour">Jour du mois où le loyer est dû</label>
+        <input id="jour" inputMode="numeric" value={jourEcheance} onChange={(e) => setJourEcheance(e.target.value.replace(/\D/g, "").slice(0, 2))} />
+      </section>
+
+      {/* Copie du bail */}
+      <section className="carte">
+        <strong>Bail signé</strong>
+        <p className="aide">Facultatif : photographie chaque page du bail, ou joins le PDF. Tu pourras aussi le faire plus tard depuis la fiche.</p>
+        <div className="rangee">
+          <button type="button" className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={traitement}>
+            {traitement ? "Traitement…" : pages.length ? "+ Page" : "Photo du bail"}
+          </button>
+          <button type="button" className="bouton" onClick={() => champFichier.current?.click()} disabled={traitement}>
+            Fichier ou PDF
+          </button>
+        </div>
+        <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterPages(e.target.files)} />
+        <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterPages(e.target.files)} />
+        {pages.length > 0 && (
+          <div className="photos">
+            {pages.map((p, i) => (
+              <div className="vignette" key={i}>
+                {p.apercuUrl ? <img src={p.apercuUrl} alt={`Bail, page ${i + 1}`} /> : "PDF"}
+                <button type="button" onClick={() => retirerPage(i)} aria-label="Retirer">×</button>
               </div>
             ))}
           </div>
         )}
-        {lignes.length > 0 && (
-          <>
-            <button className="bouton principal plein" style={{ marginTop: 12 }}
-                    onClick={exporterAvecRecus} disabled={exportEnCours !== null}>
-              {exportEnCours ?? "Exporter Excel + reçus (ZIP)"}
-            </button>
-            <button className="bouton plein" style={{ marginTop: 8 }} onClick={exporter} disabled={exportEnCours !== null}>
-              Exporter en CSV seulement
-            </button>
-          </>
-        )}
-        {exportResultat && <p className="aide" style={{ color: "var(--succes)" }}>{exportResultat}</p>}
-        {lignes.length >= LIMITE && (
-          <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : resserre la période.</p>
-        )}
       </section>
 
-      {/* Liste */}
-      <div className="carte">
-        {chargement && <p className="aide">Chargement…</p>}
-        {!chargement && lignes.length === 0 && (
-          <p className="aide">Aucune dépense pour cette sélection. Touche « + » pour photographier un reçu.</p>
-        )}
-        {!chargement && lignes.map((l) => (
-          <Link href={`/depense/${l.depense_id}`} className="liste-depense" key={l.ligne_id}>
-            <div className="infos">
-              <div className="titre">{l.fournisseur ?? "Fournisseur à préciser"}</div>
-              <div className="sous">
-                {l.date_facture} · {l.immeuble}{l.logement ? ` #${l.logement}` : ""}
-                {l.categorie ? ` · ${l.categorie}` : ""}
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div className="montant">{formatCents(l.montant_cents ?? l.total_cents)}</div>
-              {l.statut === "brouillon" && <span className="pastille">Brouillon</span>}
-            </div>
-          </Link>
-        ))}
-      </div>
+      {/* Détails */}
+      <section className="carte">
+        <label htmlFor="inclusions">Inclusions (dans le loyer)</label>
+        <input id="inclusions" placeholder="ex. chauffage, eau chaude, électroménagers" value={inclusions} onChange={(e) => setInclusions(e.target.value)} />
+        <label htmlFor="notes">Notes</label>
+        <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </section>
 
-      <Link href="/nouvelle" className="fab" aria-label="Nouvelle dépense">+</Link>
-      <BarreOnglets />
+      <div className="barre-actions">
+        <div className="contenu">
+          <button className="bouton principal" onClick={enregistrer} disabled={envoi !== null || traitement}>
+            {envoi ?? "Enregistrer le bail"}
+          </button>
+        </div>
+      </div>
     </main>
   );
 }

@@ -6,16 +6,18 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase, BUCKET_RECUS } from "@/lib/supabase";
 import { preparerFichier } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
-import { formatCents } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible } from "@/lib/dates";
+import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
+import { aujourdhuiIso, dateLisible, moisLisible, lendemain, finDuMois } from "@/lib/dates";
 
 type Bail = {
   id: string;
   statut: "a_venir" | "actif" | "termine";
   logement: string;
+  logement_id: string;
   immeuble: string;
   date_debut: string;
   date_fin: string | null;
+  date_depart: string | null;
   loyer_cents: number;
   extras_cents: number;
   jour_echeance: number;
@@ -30,7 +32,11 @@ type Bail = {
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
 type DocumentBail = { id: string; storage_key: string; mime_type: string; date_document: string | null; created_at: string; url: string | null };
-type Solde = { echeance_id: string; mois: string; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
+type Solde = { echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
+type Changement = { id: string; date_effet: string; ancien_loyer_cents: number; nouveau_loyer_cents: number; raison: string | null; created_at: string };
+type FinBail = { date_depart: string; forfait_cents: number; raison: string | null };
+type AutreBail = { id: string; statut: "a_venir" | "actif" | "termine"; date_debut: string; date_fin: string | null; date_depart: string | null; locataires: string | null };
+type Credit = { id: string; echeance_id: string; montant_cents: number; notes: string | null };
 
 const LIBELLE_MODE = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement automatique", comptant: "Comptant" };
 const LIBELLE_STATUT = { a_venir: "À venir", actif: "Actif", termine: "Terminé" };
@@ -48,6 +54,22 @@ export default function DetailBail() {
   const [suppression, setSuppression] = useState(false);
   const [documents, setDocuments] = useState<DocumentBail[]>([]);
   const [televersement, setTeleversement] = useState<string | null>(null);
+  const [changements, setChangements] = useState<Changement[]>([]);
+  const [credits, setCredits] = useState<Credit[]>([]);
+  // Formulaire « Changer le loyer »
+  const [changementOuvert, setChangementOuvert] = useState(false);
+  const [nouveauLoyer, setNouveauLoyer] = useState("");
+  const [moisEffet, setMoisEffet] = useState("");
+  const [raison, setRaison] = useState("");
+  const [envoiChangement, setEnvoiChangement] = useState(false);
+  // Fin de bail (départ du locataire)
+  const [fin, setFin] = useState<FinBail | null>(null);
+  const [autresBaux, setAutresBaux] = useState<AutreBail[]>([]);
+  const [finOuverte, setFinOuverte] = useState(false);
+  const [dateDepart, setDateDepart] = useState("");
+  const [forfait, setForfait] = useState("");
+  const [raisonFin, setRaisonFin] = useState("");
+  const [envoiFin, setEnvoiFin] = useState(false);
   const champPhoto = useRef<HTMLInputElement>(null);
   const champFichier = useRef<HTMLInputElement>(null);
 
@@ -95,23 +117,116 @@ export default function DetailBail() {
     }
   }
 
-  useEffect(() => {
-    if (!session || !id) return;
-    (async () => {
-      const [b, lo, ex, so] = await Promise.all([
+  const charger = useCallback(async () => {
+    if (!id) return;
+    {
+      const [b, lo, ex, so, ch, fi] = await Promise.all([
         supabase.from("v_baux").select("*").eq("id", id).single(),
         supabase.from("bail_locataires").select("principal, locataire:locataires(prenom, nom, telephone, courriel)").eq("bail_id", id),
         supabase.from("bail_extras").select("id, libelle, montant_cents").eq("bail_id", id),
-        supabase.from("v_soldes").select("echeance_id, mois, montant_du_cents, recu_cents, en_main_cents, solde_cents, jours_retard").eq("bail_id", id).order("mois"),
+        supabase.from("v_soldes").select("echeance_id, mois, loyer_cents, montant_du_cents, recu_cents, en_main_cents, solde_cents, jours_retard").eq("bail_id", id).order("mois"),
+        supabase.from("changements_loyer").select("id, date_effet, ancien_loyer_cents, nouveau_loyer_cents, raison, created_at").eq("bail_id", id).order("created_at"),
+        supabase.from("fins_bail").select("date_depart, forfait_cents, raison").eq("bail_id", id).maybeSingle(),
       ]);
       if (b.error || !b.data) { setErreur("Bail introuvable ou supprimé."); return; }
-      setBail(b.data as Bail);
+      const leBail = b.data as Bail;
+      setBail(leBail);
+      setFin((fi.data ?? null) as FinBail | null);
+      // Historique du logement : les autres baux (anciens et à venir)
+      const { data: au } = await supabase.from("v_baux")
+        .select("id, statut, date_debut, date_fin, date_depart, locataires")
+        .eq("logement_id", leBail.logement_id).neq("id", leBail.id).order("date_debut", { ascending: false });
+      setAutresBaux((au ?? []) as AutreBail[]);
       setLocataires(((lo.data ?? []) as unknown as Locataire[]).sort((x, y) => Number(y.principal) - Number(x.principal)));
       setExtras((ex.data ?? []) as Extra[]);
-      setSoldes((so.data ?? []) as Solde[]);
+      const listeSoldes = (so.data ?? []) as Solde[];
+      setSoldes(listeSoldes);
+      setChangements((ch.data ?? []) as Changement[]);
+      if (listeSoldes.length) {
+        const { data: cr } = await supabase.from("paiements")
+          .select("id, echeance_id, montant_cents, notes")
+          .in("echeance_id", listeSoldes.map((x) => x.echeance_id))
+          .eq("mode", "credit").is("deleted_at", null);
+        setCredits((cr ?? []) as Credit[]);
+      }
       await chargerDocuments();
-    })();
-  }, [session, id, chargerDocuments]);
+    }
+  }, [id, chargerDocuments]);
+
+  useEffect(() => {
+    if (session && id) charger();
+  }, [session, id, charger]);
+
+  function ouvrirChangement() {
+    const debutMois = aujourdhuiIso().slice(0, 7) + "-01";
+    const futurs = soldes.filter((s) => s.mois >= debutMois);
+    // Par défaut : le mois prochain (le mois courant est souvent déjà payé)
+    setMoisEffet(futurs[1]?.mois ?? futurs[0]?.mois ?? "");
+    setNouveauLoyer(bail ? centsVersSaisie(bail.loyer_cents) : "");
+    setRaison("");
+    setChangementOuvert(true);
+  }
+
+  function ouvrirFin() {
+    setDateDepart(finDuMois(aujourdhuiIso()));
+    setForfait("");
+    setRaisonFin("");
+    setFinOuverte(true);
+  }
+
+  async function enregistrerFin() {
+    if (!bail) return;
+    if (!dateDepart) return setErreur("Entre la date de départ du locataire.");
+    const forfaitCents = forfait.trim() ? versCents(forfait) : 0;
+    if (forfaitCents === null || forfaitCents < 0) return setErreur("Entre un montant forfaitaire valide (ex. 1 900,00) ou laisse vide.");
+    const dernierMois = dateDepart.slice(0, 7) + "-01";
+    const retires = soldes.filter((s) => s.mois > dernierMois).length;
+    if (!window.confirm(
+      `Départ le ${dateLisible(dateDepart)}.` +
+      (retires ? ` Les ${retires} loyer(s) prévus après ${moisLisible(dernierMois)} seront retirés.` : "") +
+      (forfaitCents ? ` Le montant forfaitaire de ${formatCents(forfaitCents)} s'ajoute à ${moisLisible(dernierMois)}.` : "") +
+      " Les mois passés et les paiements restent dans l'historique."
+    )) return;
+    setErreur(null);
+    setEnvoiFin(true);
+    const { error } = await supabase.rpc("terminer_bail", {
+      p_bail: bail.id, p_date_depart: dateDepart, p_forfait_cents: forfaitCents, p_raison: raisonFin.trim() || null,
+    });
+    setEnvoiFin(false);
+    if (error) return setErreur(error.message);
+    setFinOuverte(false);
+    await charger();
+  }
+
+  async function annulerFin() {
+    if (!bail || !window.confirm("Annuler la fin de ce bail ? (erreur de saisie) Les loyers prévus jusqu'à la fin du bail seront remis.")) return;
+    setErreur(null);
+    const { error } = await supabase.rpc("annuler_fin_bail", { p_bail: bail.id });
+    if (error) return setErreur(error.message);
+    await charger();
+  }
+
+  async function enregistrerChangement() {
+    if (!bail) return;
+    const cents = versCents(nouveauLoyer);
+    if (cents === null || cents < 0) return setErreur("Entre un loyer valide (ex. 950,00).");
+    if (!moisEffet) return setErreur("Choisis le mois du nouveau loyer.");
+    const ancien = soldes.find((s) => s.mois === moisEffet)?.loyer_cents ?? bail.loyer_cents;
+    const nb = soldes.filter((s) => s.mois >= moisEffet).length;
+    if (!window.confirm(
+      `Le loyer passera de ${formatCents(ancien)} à ${formatCents(cents)} à partir de ${moisLisible(moisEffet)} (${nb} mois). ` +
+      "Les mois précédents et les paiements déjà reçus ne changent pas."
+    )) return;
+    setErreur(null);
+    setEnvoiChangement(true);
+    const { error } = await supabase.rpc("changer_loyer", {
+      p_bail: bail.id, p_date_effet: moisEffet, p_nouveau_cents: cents, p_raison: raison.trim() || null,
+    });
+    setEnvoiChangement(false);
+    if (error) return setErreur(error.message);
+    setChangementOuvert(false);
+    await charger();
+  }
 
   async function supprimer() {
     if (!bail) return;
@@ -133,6 +248,12 @@ export default function DetailBail() {
   const totalDu = soldes.reduce((s, x) => s + x.montant_du_cents, 0);
   const totalRecu = soldes.reduce((s, x) => s + x.recu_cents, 0);
   const enRetard = soldes.filter((s) => s.jours_retard > 0);
+  const moisCourant = auj.slice(0, 7) + "-01";
+  const soldeCourant = soldes.find((s) => s.mois === moisCourant);
+  const moisFuturs = soldes.filter((s) => s.mois >= moisCourant);
+  const prochainChangement = changements
+    .filter((c) => c.date_effet > moisCourant)
+    .sort((a, b) => a.date_effet.localeCompare(b.date_effet))[0];
 
   return (
     <main className="page">
@@ -148,7 +269,14 @@ export default function DetailBail() {
         <>
           <section className="carte">
             <div className="detail-sous" style={{ marginTop: 0 }}>{bail.immeuble} · logement {bail.logement}</div>
-            <div className="detail-total">{formatCents(bail.loyer_cents + bail.extras_cents)} <span className="aide">/ mois</span></div>
+            <div className="detail-total">
+              {formatCents(soldeCourant ? soldeCourant.montant_du_cents : bail.loyer_cents + bail.extras_cents)} <span className="aide">/ mois</span>
+            </div>
+            {prochainChangement && (
+              <div className="aide" style={{ marginTop: 0 }}>
+                Loyer de {formatCents(prochainChangement.nouveau_loyer_cents)} à partir de {moisLisible(prochainChangement.date_effet)}
+              </div>
+            )}
             <span className={`pastille ${bail.statut === "actif" ? "ok" : ""}`}>{LIBELLE_STATUT[bail.statut]}</span>
           </section>
 
@@ -181,14 +309,117 @@ export default function DetailBail() {
           <section className="carte">
             <dl className="champs">
               <dt>Début</dt><dd>{dateLisible(bail.date_debut)}</dd>
-              <dt>Fin</dt><dd>{bail.date_fin ? dateLisible(bail.date_fin) : "Durée indéterminée"}</dd>
-              <dt>Loyer</dt><dd>{formatCents(bail.loyer_cents)}</dd>
+              <dt>Fin</dt>
+              <dd>
+                {bail.date_depart ? (
+                  <>
+                    Départ le {dateLisible(bail.date_depart)}
+                    <div className="aide" style={{ margin: "2px 0 0" }}>
+                      Fin prévue au bail : {bail.date_fin ? dateLisible(bail.date_fin) : "durée indéterminée"}
+                    </div>
+                  </>
+                ) : bail.date_fin ? dateLisible(bail.date_fin) : "Durée indéterminée"}
+              </dd>
+              <dt>Loyer</dt>
+              <dd>
+                {formatCents(soldeCourant?.loyer_cents ?? bail.loyer_cents)}
+                {changements.map((c) => (
+                  <div key={c.id} className="aide" style={{ margin: "2px 0 0" }}>
+                    {c.date_effet > moisCourant ? "Dès" : "Depuis"} {moisLisible(c.date_effet)} : {formatCents(c.ancien_loyer_cents)} → {formatCents(c.nouveau_loyer_cents)}
+                    {c.raison ? ` · ${c.raison}` : ""}
+                  </div>
+                ))}
+              </dd>
               {extras.map((e) => (<Fragment key={e.id}><dt>{e.libelle}</dt><dd>{formatCents(e.montant_cents)}</dd></Fragment>))}
               <dt>Paiement</dt><dd>{LIBELLE_MODE[bail.mode_paiement]}, le {bail.jour_echeance}{bail.jour_echeance === 1 ? "er" : ""} du mois</dd>
               {bail.inclusions && (<><dt>Inclusions</dt><dd>{bail.inclusions}</dd></>)}
               {bail.notes && (<><dt>Notes</dt><dd style={{ whiteSpace: "pre-wrap" }}>{bail.notes}</dd></>)}
             </dl>
+
+            {bail.statut !== "termine" && !bail.date_depart && moisFuturs.length > 0 && !changementOuvert && (
+              <button className="bouton plein" style={{ marginTop: 12 }} onClick={ouvrirChangement}>Changer le loyer</button>
+            )}
+            {changementOuvert && (
+              <div className="bloc-locataire">
+                <strong>Nouveau loyer</strong>
+                <label htmlFor="nouveau-loyer">Loyer par mois (sans les extras)</label>
+                <input id="nouveau-loyer" className="montant-total" inputMode="decimal" value={nouveauLoyer}
+                       onChange={(e) => setNouveauLoyer(e.target.value)} />
+                <label htmlFor="mois-effet">À partir de</label>
+                <select id="mois-effet" value={moisEffet} onChange={(e) => setMoisEffet(e.target.value)}>
+                  {moisFuturs.map((s) => (
+                    <option key={s.mois} value={s.mois}>
+                      {moisLisible(s.mois)}{s.recu_cents > 0 ? " (déjà payé en partie ou au complet)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <label htmlFor="raison-changement">Raison</label>
+                <input id="raison-changement" placeholder="ex. Installation d'une thermopompe" value={raison}
+                       onChange={(e) => setRaison(e.target.value)} />
+                <p className="aide">
+                  Jusqu&apos;à la fin du bail{bail.date_fin ? ` (${dateLisible(bail.date_fin)})` : ""}. Les mois précédents et les paiements
+                  déjà reçus restent comme ils sont. Garde l&apos;entente signée avec le locataire dans « Bail signé ».
+                </p>
+                <div className="rangee">
+                  <button className="bouton" onClick={() => setChangementOuvert(false)} disabled={envoiChangement}>Annuler</button>
+                  <button className="bouton principal" onClick={enregistrerChangement} disabled={envoiChangement}>
+                    {envoiChangement ? "Enregistrement…" : "Appliquer"}
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
+
+          {/* Départ du locataire */}
+          {bail.date_depart ? (
+            <section className="carte">
+              <strong>Fin du bail</strong>
+              <p className="aide">
+                Le locataire {bail.statut === "termine" ? "est parti" : "part"} le {dateLisible(bail.date_depart)}.
+                {fin && fin.forfait_cents > 0 && ` Montant forfaitaire : ${formatCents(fin.forfait_cents)} (ajouté au loyer de ${moisLisible(bail.date_depart.slice(0, 7) + "-01")}).`}
+                {fin?.raison && ` Raison : ${fin.raison}.`}
+              </p>
+              {!autresBaux.some((a) => a.date_debut > (bail.date_depart ?? "")) && (
+                <Link className="bouton principal plein" href={`/baux/nouveau?logement=${bail.logement_id}&debut=${lendemain(bail.date_depart)}`}>
+                  Entrer le nouveau bail
+                </Link>
+              )}
+              {fin && (
+                <button className="lien-filtres" style={{ margin: "10px auto 0" }} onClick={annulerFin}>
+                  Annuler la fin du bail (erreur de saisie)
+                </button>
+              )}
+            </section>
+          ) : bail.statut !== "termine" && (
+            <section className="carte">
+              {!finOuverte ? (
+                <button className="bouton plein" onClick={ouvrirFin}>Terminer le bail (départ du locataire)</button>
+              ) : (
+                <>
+                  <strong>Terminer le bail</strong>
+                  <label htmlFor="date-depart">Date de départ (dernier jour du locataire)</label>
+                  <input id="date-depart" type="date" value={dateDepart} min={bail.date_debut} max={bail.date_fin ?? undefined}
+                         onChange={(e) => setDateDepart(e.target.value)} />
+                  <label htmlFor="forfait">Montant forfaitaire (facultatif)</label>
+                  <input id="forfait" inputMode="decimal" placeholder="ex. 1 900,00" value={forfait}
+                         onChange={(e) => setForfait(e.target.value)} />
+                  <label htmlFor="raison-fin">Raison ou entente</label>
+                  <input id="raison-fin" placeholder="ex. Entente : 2 mois payés pour libérer le bail" value={raisonFin}
+                         onChange={(e) => setRaisonFin(e.target.value)} />
+                  <p className="aide">
+                    Le bail n&apos;est pas supprimé : les mois passés et les paiements restent. Les loyers prévus après le mois
+                    du départ sont retirés. Le montant forfaitaire s&apos;ajoute au dernier mois et se marque « Reçu » dans l&apos;onglet Loyers.
+                  </p>
+                  <div className="rangee">
+                    <button className="bouton" onClick={() => setFinOuverte(false)} disabled={envoiFin}>Annuler</button>
+                    <button className="bouton principal" onClick={enregistrerFin} disabled={envoiFin}>
+                      {envoiFin ? "Enregistrement…" : "Terminer le bail"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           <section className="carte">
             <strong>Bail signé</strong>
@@ -215,7 +446,7 @@ export default function DetailBail() {
             {documents.length > 0 && <p className="aide">{documents.length} page{documents.length > 1 ? "s" : ""} · toucher pour ouvrir.</p>}
           </section>
 
-          {bail.avis_du && (
+          {bail.avis_du && !bail.date_depart && (
             <section className="carte">
               <strong>Renouvellement</strong>
               <p className="aide">
@@ -240,6 +471,9 @@ export default function DetailBail() {
                 <div className="infos">
                   <div className="titre" style={{ textTransform: "capitalize" }}>{moisLisible(s.mois)}</div>
                   {s.en_main_cents > 0 && <div className="sous">Chèque en main : {formatCents(s.en_main_cents)}</div>}
+                  {credits.filter((c) => c.echeance_id === s.echeance_id).map((c) => (
+                    <div key={c.id} className="sous">Crédit {formatCents(c.montant_cents)} · {c.notes}</div>
+                  ))}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div className="montant">{formatCents(s.montant_du_cents)}</div>
@@ -251,8 +485,25 @@ export default function DetailBail() {
                 </div>
               </div>
             ))}
-            <p className="aide">L&apos;enregistrement des loyers reçus arrive dans la version 0.7 (onglet Loyers).</p>
+            <p className="aide">Pour enregistrer un paiement ou un crédit : onglet <Link href="/loyers">Loyers</Link>.</p>
           </section>
+
+          {autresBaux.length > 0 && (
+            <section className="carte">
+              <strong>Autres baux de ce logement</strong>
+              {autresBaux.map((a) => (
+                <Link key={a.id} href={`/baux/${a.id}`} className="liste-depense">
+                  <div className="infos">
+                    <div className="titre">{a.locataires ?? "Locataire"}</div>
+                    <div className="sous">
+                      {dateLisible(a.date_debut)} → {a.date_depart ? `départ ${dateLisible(a.date_depart)}` : a.date_fin ? dateLisible(a.date_fin) : "indéterminée"}
+                    </div>
+                  </div>
+                  <span className={`pastille ${a.statut === "actif" ? "ok" : a.statut === "termine" ? "gris" : ""}`}>{LIBELLE_STATUT[a.statut]}</span>
+                </Link>
+              ))}
+            </section>
+          )}
 
           <button className="bouton plein lien-danger" onClick={supprimer} disabled={suppression}>
             {suppression ? "Suppression…" : "Supprimer ce bail (erreur de saisie)"}

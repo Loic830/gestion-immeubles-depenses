@@ -1,7 +1,7 @@
 # Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.7 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.7.5 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -15,6 +15,10 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
    (v0.2 : écran Modifier / Compléter).
 4. `supabase/004_module2_loyers.sql` — Module 2 : locataires, baux, extras, échéances,
    paiements, renouvellements, documents ; vues v_soldes et v_baux ; RPC creer_bail.
+5. `supabase/005_changement_loyer_credits.sql` — changement de loyer en cours de bail
+   (table `changements_loyer`, RPC `changer_loyer`) et crédits au locataire (mode `credit`).
+6. `supabase/006_fin_de_bail.sql` — fin de bail anticipée : table `fins_bail`, RPC `terminer_bail`
+   et `annuler_fin_bail`.
 
 ## 2. Lancer en local
 
@@ -53,6 +57,7 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/depense/[id]/page.tsx` | Détail : reçus (URL signées 10 min), plein écran, téléchargement, suppression douce |
 | `app/depense/[id]/modifier/page.tsx` | Modifier une dépense ou compléter un brouillon |
 | `components/FormulaireDepense.tsx` | Formulaire partagé saisie / modification |
+| `components/ChoixFournisseur.tsx` | Champ fournisseur : menu déroulant avec recherche dans l'historique |
 | `lib/image.ts` | Compression (2000 px, JPEG 0,8), miniature 400 px, retrait EXIF/GPS, SHA-256 |
 | `lib/repartition.ts` | Répartition d'un montant au cent près (parts égales ou au prorata des logements) |
 | `lib/argent.ts` | Montants en cents, décomposition TPS (5 %) / TVQ (9,975 %) |
@@ -154,6 +159,16 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 - Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
 - Icônes et manifeste fournis par Loïc (dossier `public/`, icône « maskable » incluse).
+
+## Correctifs
+
+- 0.7.1 : photo du bail directement dans « Nouveau bail ».
+- 0.7.2 : totaux visibles dans l'aperçu Excel de l'iPhone (résultats des formules enregistrés dans le fichier).
+- 0.7.3 : fournisseur avec menu déroulant (recherche sans accents, les plus utilisés en premier, « + Nouveau fournisseur »).
+- 0.7.4 : « Changer le loyer » sur la fiche du bail (à partir d'un mois, jusqu'à la fin ; passé et paiements intacts, historique gardé) ;
+  « Crédit au locataire » dans la feuille de paiement (montant + raison obligatoire ; le loyer reste dû au complet).
+- 0.7.5 : « Terminer le bail (départ du locataire) » : date de départ, montant forfaitaire ajouté au dernier mois, raison ;
+  loyers futurs retirés, historique gardé ; « Entrer le nouveau bail » (logement et date préremplis) ; autres baux du logement.
 
 ## Limites connues
 

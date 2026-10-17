@@ -39,3 +39,15 @@ export function moisLisible(iso: string): string {
 export function triNumero(a: string, b: string): number {
   return a.localeCompare(b, "fr-CA", { numeric: true });
 }
+
+/** Lendemain : « 2027-01-15 » → « 2027-01-16 » */
+export function lendemain(iso: string): string {
+  const [a, m, j] = iso.split("-").map(Number);
+  return versIso(new Date(a, m - 1, j + 1));
+}
+
+/** Dernier jour du mois : « 2026-10-16 » → « 2026-10-31 » */
+export function finDuMois(iso: string): string {
+  const [a, m] = iso.split("-").map(Number);
+  return versIso(new Date(a, m, 0));
+}

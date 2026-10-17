@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, BUCKET_RECUS } from "@/lib/supabase";
+import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
 import { versCents, formatCents } from "@/lib/argent";
-import { finApresMois, prochainPremierJuillet, triNumero, dateLisible } from "@/lib/dates";
+import { finApresMois, prochainPremierJuillet, triNumero, dateLisible, aujourdhuiIso } from "@/lib/dates";
 
 type Immeuble = { id: string; nom: string };
 type Logement = { id: string; immeuble_id: string; numero: string };
@@ -44,7 +45,10 @@ function NouveauBail() {
 
   const [logementId, setLogementId] = useState(params.get("logement") ?? "");
   const [locataires, setLocataires] = useState<LocataireForm[]>([nouveauLocataire()]);
-  const [dateDebut, setDateDebut] = useState(prochainPremierJuillet());
+  // ?debut=AAAA-MM-JJ : arrivée depuis « Entrer le nouveau bail » (lendemain du départ)
+  const [dateDebut, setDateDebut] = useState(
+    /^\d{4}-\d{2}-\d{2}$/.test(params.get("debut") ?? "") ? (params.get("debut") as string) : prochainPremierJuillet()
+  );
   const [duree, setDuree] = useState<Duree>("12");
   const [dateFinAutre, setDateFinAutre] = useState("");
   const [loyerSaisi, setLoyerSaisi] = useState("");
@@ -54,7 +58,12 @@ function NouveauBail() {
   const [inclusions, setInclusions] = useState("");
   const [notes, setNotes] = useState("");
 
-  const [envoi, setEnvoi] = useState(false);
+  const [pages, setPages] = useState<FichierPrepare[]>([]);
+  const [traitement, setTraitement] = useState(false);
+  const champPhoto = useRef<HTMLInputElement>(null);
+  const champFichier = useRef<HTMLInputElement>(null);
+
+  const [envoi, setEnvoi] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
 
   useEffect(() => {
@@ -74,6 +83,52 @@ function NouveauBail() {
   const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
   const loyerCents = versCents(loyerSaisi);
   const extrasCents = extras.reduce((s, e) => s + (versCents(e.montantSaisi) ?? 0), 0);
+
+  async function ajouterPages(liste: FileList | null) {
+    if (!liste || liste.length === 0) return;
+    setErreur(null);
+    setTraitement(true);
+    try {
+      const prepares: FichierPrepare[] = [];
+      for (const f of Array.from(liste)) prepares.push(await preparerFichier(f));
+      setPages((avant) => [...avant, ...prepares]);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Erreur pendant le traitement de la photo.");
+    } finally {
+      setTraitement(false);
+      if (champPhoto.current) champPhoto.current.value = "";
+      if (champFichier.current) champFichier.current.value = "";
+    }
+  }
+
+  function retirerPage(i: number) {
+    setPages((avant) => {
+      const copie = [...avant];
+      const [retiree] = copie.splice(i, 1);
+      if (retiree?.apercuUrl) URL.revokeObjectURL(retiree.apercuUrl);
+      return copie;
+    });
+  }
+
+  /** Envoie les pages du bail une fois le bail créé ; retourne le nombre d'échecs. */
+  async function televerserPages(bailId: string): Promise<number> {
+    let echecs = 0;
+    for (let i = 0; i < pages.length; i++) {
+      setEnvoi(`Envoi du bail ${i + 1} / ${pages.length}…`);
+      const f = pages[i];
+      const maintenant = new Date();
+      const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
+      const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
+      const envoiFichier = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
+      if (envoiFichier.error) { echecs++; continue; }
+      const { error } = await supabase.from("documents").insert({
+        bail_id: bailId, type: "bail", storage_key: cle, mime_type: f.mimeType,
+        date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
+      });
+      if (error) echecs++;
+    }
+    return echecs;
+  }
 
   function majLocataire(cle: string, patch: Partial<LocataireForm>) {
     setLocataires((avant) => avant.map((l) => (l.cle === cle ? { ...l, ...patch } : l)));
@@ -95,7 +150,7 @@ function NouveauBail() {
     const ext = extras.filter((e) => e.libelle.trim() || e.montantSaisi.trim());
     if (ext.some((e) => !e.libelle.trim() || versCents(e.montantSaisi) === null)) return setErreur("Chaque extra a besoin d'un libellé et d'un montant.");
 
-    setEnvoi(true);
+    setEnvoi("Enregistrement…");
     const { data, error } = await supabase.rpc("creer_bail", {
       p: {
         logement_id: logementId,
@@ -112,14 +167,19 @@ function NouveauBail() {
         extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: versCents(e.montantSaisi) })),
       },
     });
-    setEnvoi(false);
     if (error) {
+      setEnvoi(null);
       setErreur(error.message.includes("baux_sans_chevauchement")
         ? "Ce logement a déjà un bail sur ces dates. Vérifie les dates ou termine l'ancien bail."
         : error.message);
       return;
     }
-    router.replace(`/baux/${data}`);
+    const bailId = data as string;
+    if (pages.length) {
+      const echecs = await televerserPages(bailId);
+      if (echecs) window.alert(`Le bail est enregistré, mais ${echecs} page(s) n'ont pas pu être envoyées. Ajoute-les depuis la fiche du bail.`);
+    }
+    router.replace(`/baux/${bailId}`);
   }
 
   if (!pret || !session) return null;
@@ -239,6 +299,32 @@ function NouveauBail() {
         <input id="jour" inputMode="numeric" value={jourEcheance} onChange={(e) => setJourEcheance(e.target.value.replace(/\D/g, "").slice(0, 2))} />
       </section>
 
+      {/* Copie du bail */}
+      <section className="carte">
+        <strong>Bail signé</strong>
+        <p className="aide">Facultatif : photographie chaque page du bail, ou joins le PDF. Tu pourras aussi le faire plus tard depuis la fiche.</p>
+        <div className="rangee">
+          <button type="button" className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={traitement}>
+            {traitement ? "Traitement…" : pages.length ? "+ Page" : "Photo du bail"}
+          </button>
+          <button type="button" className="bouton" onClick={() => champFichier.current?.click()} disabled={traitement}>
+            Fichier ou PDF
+          </button>
+        </div>
+        <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterPages(e.target.files)} />
+        <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterPages(e.target.files)} />
+        {pages.length > 0 && (
+          <div className="photos">
+            {pages.map((p, i) => (
+              <div className="vignette" key={i}>
+                {p.apercuUrl ? <img src={p.apercuUrl} alt={`Bail, page ${i + 1}`} /> : "PDF"}
+                <button type="button" onClick={() => retirerPage(i)} aria-label="Retirer">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Détails */}
       <section className="carte">
         <label htmlFor="inclusions">Inclusions (dans le loyer)</label>
@@ -249,8 +335,8 @@ function NouveauBail() {
 
       <div className="barre-actions">
         <div className="contenu">
-          <button className="bouton principal" onClick={enregistrer} disabled={envoi}>
-            {envoi ? "Enregistrement…" : "Enregistrer le bail"}
+          <button className="bouton principal" onClick={enregistrer} disabled={envoi !== null || traitement}>
+            {envoi ?? "Enregistrer le bail"}
           </button>
         </div>
       </div>
