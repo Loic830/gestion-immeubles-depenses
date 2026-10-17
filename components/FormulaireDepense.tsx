@@ -8,6 +8,7 @@ import { useSession } from "@/lib/useSession";
 import { preparerFichier, cleStockage, type FichierPrepare } from "@/lib/image";
 import { versCents, formatCents, centsVersSaisie, decomposerTaxes } from "@/lib/argent";
 import { repartirEgalement, repartirSelonPoids } from "@/lib/repartition";
+import ChoixFournisseur, { normaliser, type FournisseurOption } from "@/components/ChoixFournisseur";
 
 type Immeuble = { id: string; nom: string; nb_logements: number | null };
 type Logement = { id: string; immeuble_id: string; numero: string };
@@ -67,6 +68,15 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
   const [totalSaisi, setTotalSaisi] = useState("");
   const [immeubleId, setImmeubleId] = useState<string>("");
   const [fournisseurNom, setFournisseurNom] = useState("");
+  const [usageFournisseurs, setUsageFournisseurs] = useState<Map<string, { n: number; dernier: string }>>(new Map());
+  const optionsFournisseurs = useMemo<FournisseurOption[]>(
+    () => fournisseurs.map((f) => ({
+      id: f.id, nom: f.nom,
+      utilisations: usageFournisseurs.get(f.id)?.n ?? 0,
+      dernier: usageFournisseurs.get(f.id)?.dernier ?? null,
+    })),
+    [fournisseurs, usageFournisseurs],
+  );
   const [categorieId, setCategorieId] = useState("");
   const [categorieTouchee, setCategorieTouchee] = useState(false);
   const [dateFacture, setDateFacture] = useState(aujourdHui());
@@ -96,12 +106,15 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
   useEffect(() => {
     if (!session) return;
     (async () => {
-      const [im, lo, ca, fo, mo] = await Promise.all([
+      const [im, lo, ca, fo, mo, us] = await Promise.all([
         supabase.from("immeubles").select("id, nom, nb_logements").is("deleted_at", null).eq("actif", true).order("nom"),
         supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true).order("numero"),
         supabase.from("categories").select("id, nom, parent_id, nature_defaut, ordre").is("deleted_at", null).eq("actif", true).order("ordre"),
         supabase.from("fournisseurs").select("id, nom, categorie_defaut_id").is("deleted_at", null).order("nom"),
         supabase.from("modes_paiement").select("id, nom").eq("actif", true).order("nom"),
+        // Historique : sert à classer les fournisseurs du menu (les plus utilisés en premier).
+        supabase.from("depenses").select("fournisseur_id, date_facture").is("deleted_at", null)
+          .not("fournisseur_id", "is", null).order("date_facture", { ascending: false }).limit(1000),
       ]);
       const premiereErreur = [im, lo, ca, fo, mo].find((r) => r.error)?.error;
       if (premiereErreur) { setErreur(premiereErreur.message); setChargement(false); return; }
@@ -109,6 +122,13 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
       setLogements((lo.data ?? []) as Logement[]);
       setCategories((ca.data ?? []) as Categorie[]);
       setFournisseurs((fo.data ?? []) as Fournisseur[]);
+      const usage = new Map<string, { n: number; dernier: string }>();
+      for (const u of (us.data ?? []) as { fournisseur_id: string; date_facture: string }[]) {
+        const x = usage.get(u.fournisseur_id);
+        if (x) x.n++;
+        else usage.set(u.fournisseur_id, { n: 1, dernier: u.date_facture });
+      }
+      setUsageFournisseurs(usage);
       setModes((mo.data ?? []) as ModePaiement[]);
 
       if (!depenseId) {
@@ -179,7 +199,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
   // Catégorie habituelle du fournisseur
   useEffect(() => {
     if (categorieTouchee) return;
-    const f = fournisseurs.find((x) => x.nom.toLowerCase() === fournisseurNom.trim().toLowerCase());
+    const f = fournisseurs.find((x) => normaliser(x.nom) === normaliser(fournisseurNom));
     if (f?.categorie_defaut_id) setCategorieId(f.categorie_defaut_id);
   }, [fournisseurNom, fournisseurs, categorieTouchee]);
 
@@ -411,6 +431,27 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
           ? `${formatCents(totalCents)} · ${nomImmeuble} · ${categorieChoisie?.nom ?? ""}`
           : `Brouillon enregistré · ${nomImmeuble}`
       );
+      // Un nouveau fournisseur doit apparaître tout de suite dans le menu pour la saisie suivante.
+      const nom = fournisseurNom.trim();
+      if (nom) {
+        const deja = fournisseurs.find((f) => normaliser(f.nom) === normaliser(nom));
+        if (deja) {
+          setUsageFournisseurs((m) => {
+            const copie = new Map(m);
+            const x = copie.get(deja.id);
+            copie.set(deja.id, { n: (x?.n ?? 0) + 1, dernier: dateFacture });
+            return copie;
+          });
+        } else {
+          const { data } = await supabase.from("fournisseurs").select("id, nom, categorie_defaut_id")
+            .is("deleted_at", null).order("nom");
+          if (data) {
+            setFournisseurs(data as Fournisseur[]);
+            const cree = (data as Fournisseur[]).find((f) => normaliser(f.nom) === normaliser(nom));
+            if (cree) setUsageFournisseurs((m) => new Map(m).set(cree.id, { n: 1, dernier: dateFacture }));
+          }
+        }
+      }
       reinitialiser();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
@@ -539,11 +580,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
         )}
 
         <label htmlFor="fournisseur">Fournisseur</label>
-        <input id="fournisseur" list="liste-fournisseurs" autoComplete="off" placeholder="ex. Rona, Hydro-Québec"
-               value={fournisseurNom} onChange={(e) => setFournisseurNom(e.target.value)} />
-        <datalist id="liste-fournisseurs">
-          {fournisseurs.map((f) => <option key={f.id} value={f.nom} />)}
-        </datalist>
+        <ChoixFournisseur options={optionsFournisseurs} valeur={fournisseurNom} onChange={setFournisseurNom} />
 
         {!repartie && (
           <>

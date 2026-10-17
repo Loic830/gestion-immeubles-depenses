@@ -314,3 +314,33 @@ button.logement-ligne { border-bottom: 1px solid var(--bordure); }
   display: flex; justify-content: space-between; gap: 8px; align-items: center;
   font-size: 15px; padding: 8px 0; border-bottom: 1px solid var(--bordure);
 }
+
+/* Choix du fournisseur (menu déroulant avec recherche) */
+.choix-fournisseur { position: relative; }
+.choix-fournisseur-champ { position: relative; }
+.choix-fournisseur-champ input { width: 100%; padding-right: 44px; }
+.choix-fournisseur-bouton {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 44px;
+  background: none; border: none; color: var(--discret);
+  font-size: 1.2rem; padding: 0; min-height: 0;
+}
+.choix-fournisseur-menu {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+  margin: 0; padding: 4px 0; list-style: none;
+  background: var(--carte); border: 1px solid var(--bordure); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.choix-fournisseur-menu li {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 12px 14px; min-height: 44px; cursor: pointer;
+}
+.choix-fournisseur-menu li + li { border-top: 1px solid var(--bordure); }
+.choix-fournisseur-menu li.actif,
+.choix-fournisseur-menu li:active { background: var(--accent-clair); }
+.choix-fournisseur-titre {
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--discret); cursor: default !important; min-height: 0 !important; padding: 6px 14px !important;
+}
+.choix-fournisseur-compte { font-size: 0.85rem; color: var(--discret); }
+.choix-fournisseur-nouveau { color: var(--accent); font-weight: 600; }
