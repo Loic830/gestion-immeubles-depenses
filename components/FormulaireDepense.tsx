@@ -203,6 +203,16 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
     if (f?.categorie_defaut_id) setCategorieId(f.categorie_defaut_id);
   }, [fournisseurNom, fournisseurs, categorieTouchee]);
 
+  // En répartition, la catégorie du haut s'applique aux lignes qui n'en ont pas
+  // (ou qui avaient l'ancienne) ; une ligne changée à la main garde la sienne.
+  const categoriePrecedente = useRef(categorieId);
+  useEffect(() => {
+    const avant = categoriePrecedente.current;
+    categoriePrecedente.current = categorieId;
+    if (!repartie || !categorieId || avant === categorieId) return;
+    setLignesForm((ls) => ls.map((l) => (!l.categorieId || l.categorieId === avant ? { ...l, categorieId } : l)));
+  }, [categorieId, repartie]);
+
   const totalCents = versCents(totalSaisi);
   const categoriesPrincipales = useMemo(() => categories.filter((c) => !c.parent_id), [categories]);
   const categorieChoisie = categories.find((c) => c.id === categorieId);
@@ -232,6 +242,7 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
       immeubles.map((im) => nouvelleLigne({
         immeubleId: im.id,
         logementId: im.id === immeubleId ? logementId : "",
+        categorieId, // la catégorie déjà choisie suit sur chaque ligne
       }))
     );
     setRepartie(true);
@@ -562,6 +573,24 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
                value={totalSaisi} onChange={(e) => setTotalSaisi(e.target.value)} />
         {totalSaisi !== "" && totalCents === null && <p className="aide">Format attendu : 142,37</p>}
 
+        <label htmlFor="fournisseur">Fournisseur</label>
+        <ChoixFournisseur options={optionsFournisseurs} valeur={fournisseurNom} onChange={setFournisseurNom} />
+
+        <label htmlFor="categorie">{repartie ? "Catégorie (pour toutes les lignes)" : "Catégorie"}</label>
+        <select id="categorie" value={categorieId}
+                onChange={(e) => { setCategorieId(e.target.value); setCategorieTouchee(true); }}>
+          {optionsCategories}
+        </select>
+        {!repartie && categorieChoisie?.nature_defaut === "capital" && (
+          <p className="aide">Dépense en capital : amortissable, elle ne se déduit pas en entier cette année.</p>
+        )}
+        {repartie && <p className="aide">Une ligne peut avoir sa propre catégorie plus bas.</p>}
+
+        <label htmlFor="date">Date de la facture</label>
+        <input id="date" type="date" value={dateFacture} onChange={(e) => setDateFacture(e.target.value)} />
+
+        {/* Immeuble : après la date ; la répartition s'ouvre dans la carte suivante
+            sans faire disparaître le fournisseur ni la catégorie. */}
         {!repartie && (
           <>
             <label>Immeuble</label>
@@ -578,25 +607,6 @@ export default function FormulaireDepense({ depenseId }: { depenseId?: string })
             </button>
           </>
         )}
-
-        <label htmlFor="fournisseur">Fournisseur</label>
-        <ChoixFournisseur options={optionsFournisseurs} valeur={fournisseurNom} onChange={setFournisseurNom} />
-
-        {!repartie && (
-          <>
-            <label htmlFor="categorie">Catégorie</label>
-            <select id="categorie" value={categorieId}
-                    onChange={(e) => { setCategorieId(e.target.value); setCategorieTouchee(true); }}>
-              {optionsCategories}
-            </select>
-            {categorieChoisie?.nature_defaut === "capital" && (
-              <p className="aide">Dépense en capital : amortissable, elle ne se déduit pas en entier cette année.</p>
-            )}
-          </>
-        )}
-
-        <label htmlFor="date">Date de la facture</label>
-        <input id="date" type="date" value={dateFacture} onChange={(e) => setDateFacture(e.target.value)} />
       </section>
 
       {/* 2b. Répartition entre immeubles */}
