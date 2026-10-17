@@ -8,6 +8,7 @@ const ONGLETS = [
   { href: "/loyers", libelle: "Loyers", icone: "💵", actif: (p: string) => p.startsWith("/loyers") },
   { href: "/", libelle: "Dépenses", icone: "🧾", actif: (p: string) => p === "/" || p.startsWith("/depense") },
   { href: "/baux", libelle: "Baux", icone: "🔑", actif: (p: string) => p.startsWith("/baux") },
+  { href: "/vehicule", libelle: "Véhicule", icone: "🚗", actif: (p: string) => p.startsWith("/vehicule") },
 ];
 
 export default function BarreOnglets() {

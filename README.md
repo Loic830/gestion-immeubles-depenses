@@ -1,7 +1,7 @@
 # Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.7.5 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -19,6 +19,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
    (table `changements_loyer`, RPC `changer_loyer`) et crédits au locataire (mode `credit`).
 6. `supabase/006_fin_de_bail.sql` — fin de bail anticipée : table `fins_bail`, RPC `terminer_bail`
    et `annuler_fin_bail`.
+7. `supabase/007_vehicule.sql` — véhicule : véhicules, relevés du compteur, trajets fréquents,
+   journal de bord (déplacements) et frais du véhicule.
 
 ## 2. Lancer en local
 
@@ -47,6 +49,9 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble : etat_des_loyers.xlsx (liens vers les baux, totaux mensuel et annuel) + dossier baux/ |
+| `app/vehicule/page.tsx` | Onglet Véhicule : trajets (favoris, motif), frais (reçu), compteur, résumé du prorata, export |
+| `lib/vehicule.ts` | Calcul du prorata : km immeubles / km totaux, part déductible et répartition par immeuble |
+| `lib/exportVehicule.ts` | Dossier véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais avec liens) + recus/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
 | `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
@@ -155,6 +160,19 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - Les paiements déjà enregistrés sont listés dans la feuille ; « Annuler » = suppression douce (erreur de saisie).
 - Paiements insérés directement dans `paiements` (statut `recu`) ; `v_soldes` calcule soldes et retards.
 
+## Véhicule (v0.8)
+
+- Onglet « Véhicule » (4e onglet). Premier usage : nommer le véhicule, puis inscrire le compteur.
+- Trajet : immeuble (ou « Plusieurs »), km aller-retour, date, motif obligatoire (puces ou texte),
+  destination ; « Garder comme trajet fréquent » crée un raccourci en un toucher.
+- Frais : montant complet (100 %), type (essence, entretien, assurance, SAAQ, intérêts, location, autre),
+  photo du reçu (bucket `recus`, dossier `vehicule/`).
+- Compteur : relevés datés ; début = relevé le plus proche du 1er janvier, fin = le plus proche du 31 décembre
+  (tolérance 31 jours), sinon premier et dernier de l'année (« à ce jour »).
+- % = km du journal / km du compteur ; part déductible = frais × % ; répartie par immeuble selon ses km,
+  les trajets « Plusieurs » selon le nombre de logements.
+- Export par année : vehicule_AAAA.xlsx (Résumé, Journal de bord, Frais) + reçus. La DPA est laissée au comptable.
+
 ## Thème
 
 - Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
@@ -178,6 +196,6 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8 : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+1. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
 2. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
 3. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.

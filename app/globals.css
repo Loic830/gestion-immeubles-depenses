@@ -344,3 +344,20 @@ button.logement-ligne { border-bottom: 1px solid var(--bordure); }
 }
 .choix-fournisseur-compte { font-size: 0.85rem; color: var(--discret); }
 .choix-fournisseur-nouveau { color: var(--accent); font-weight: 600; }
+
+/* Véhicule (v0.8) : puces de choix rapide, case à cocher, section repliable */
+.puces { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.puce {
+  display: inline-flex; align-items: stretch; border: 1px solid var(--bordure);
+  border-radius: 999px; background: var(--carte); overflow: hidden;
+}
+.puce button {
+  border: none; background: none; font: inherit; font-size: 15px; color: var(--texte);
+  padding: 8px 12px; min-height: 40px; cursor: pointer;
+}
+.puce.actif { background: var(--accent); border-color: var(--accent); }
+.puce.actif button { color: var(--sur-accent); font-weight: 600; }
+.puce .puce-retirer { color: var(--discret); padding: 8px 10px 8px 2px; font-size: 18px; }
+.case { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-weight: 400; }
+.case input { width: 22px; height: 22px; margin: 0; flex: 0 0 auto; }
+details.carte summary { cursor: pointer; list-style-position: inside; }
