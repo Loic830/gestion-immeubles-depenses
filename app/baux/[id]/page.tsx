@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase, BUCKET_RECUS } from "@/lib/supabase";
 import { preparerFichier } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
-import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
+import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, moisLisible } from "@/lib/dates";
 
 type Bail = {
@@ -30,9 +30,7 @@ type Bail = {
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
 type DocumentBail = { id: string; storage_key: string; mime_type: string; date_document: string | null; created_at: string; url: string | null };
-type Solde = { echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
-type Changement = { id: string; date_effet: string; ancien_loyer_cents: number; nouveau_loyer_cents: number; raison: string | null; created_at: string };
-type Credit = { id: string; echeance_id: string; montant_cents: number; notes: string | null };
+type Solde = { echeance_id: string; mois: string; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
 
 const LIBELLE_MODE = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement automatique", comptant: "Comptant" };
 const LIBELLE_STATUT = { a_venir: "À venir", actif: "Actif", termine: "Terminé" };
@@ -50,14 +48,6 @@ export default function DetailBail() {
   const [suppression, setSuppression] = useState(false);
   const [documents, setDocuments] = useState<DocumentBail[]>([]);
   const [televersement, setTeleversement] = useState<string | null>(null);
-  const [changements, setChangements] = useState<Changement[]>([]);
-  const [credits, setCredits] = useState<Credit[]>([]);
-  // Formulaire « Changer le loyer »
-  const [changementOuvert, setChangementOuvert] = useState(false);
-  const [nouveauLoyer, setNouveauLoyer] = useState("");
-  const [moisEffet, setMoisEffet] = useState("");
-  const [raison, setRaison] = useState("");
-  const [envoiChangement, setEnvoiChangement] = useState(false);
   const champPhoto = useRef<HTMLInputElement>(null);
   const champFichier = useRef<HTMLInputElement>(null);
 
@@ -105,69 +95,23 @@ export default function DetailBail() {
     }
   }
 
-  const charger = useCallback(async () => {
-    if (!id) return;
-    {
-      const [b, lo, ex, so, ch] = await Promise.all([
+  useEffect(() => {
+    if (!session || !id) return;
+    (async () => {
+      const [b, lo, ex, so] = await Promise.all([
         supabase.from("v_baux").select("*").eq("id", id).single(),
         supabase.from("bail_locataires").select("principal, locataire:locataires(prenom, nom, telephone, courriel)").eq("bail_id", id),
         supabase.from("bail_extras").select("id, libelle, montant_cents").eq("bail_id", id),
-        supabase.from("v_soldes").select("echeance_id, mois, loyer_cents, montant_du_cents, recu_cents, en_main_cents, solde_cents, jours_retard").eq("bail_id", id).order("mois"),
-        supabase.from("changements_loyer").select("id, date_effet, ancien_loyer_cents, nouveau_loyer_cents, raison, created_at").eq("bail_id", id).order("created_at"),
+        supabase.from("v_soldes").select("echeance_id, mois, montant_du_cents, recu_cents, en_main_cents, solde_cents, jours_retard").eq("bail_id", id).order("mois"),
       ]);
       if (b.error || !b.data) { setErreur("Bail introuvable ou supprimé."); return; }
       setBail(b.data as Bail);
       setLocataires(((lo.data ?? []) as unknown as Locataire[]).sort((x, y) => Number(y.principal) - Number(x.principal)));
       setExtras((ex.data ?? []) as Extra[]);
-      const listeSoldes = (so.data ?? []) as Solde[];
-      setSoldes(listeSoldes);
-      setChangements((ch.data ?? []) as Changement[]);
-      if (listeSoldes.length) {
-        const { data: cr } = await supabase.from("paiements")
-          .select("id, echeance_id, montant_cents, notes")
-          .in("echeance_id", listeSoldes.map((x) => x.echeance_id))
-          .eq("mode", "credit").is("deleted_at", null);
-        setCredits((cr ?? []) as Credit[]);
-      }
+      setSoldes((so.data ?? []) as Solde[]);
       await chargerDocuments();
-    }
-  }, [id, chargerDocuments]);
-
-  useEffect(() => {
-    if (session && id) charger();
-  }, [session, id, charger]);
-
-  function ouvrirChangement() {
-    const debutMois = aujourdhuiIso().slice(0, 7) + "-01";
-    const futurs = soldes.filter((s) => s.mois >= debutMois);
-    // Par défaut : le mois prochain (le mois courant est souvent déjà payé)
-    setMoisEffet(futurs[1]?.mois ?? futurs[0]?.mois ?? "");
-    setNouveauLoyer(bail ? centsVersSaisie(bail.loyer_cents) : "");
-    setRaison("");
-    setChangementOuvert(true);
-  }
-
-  async function enregistrerChangement() {
-    if (!bail) return;
-    const cents = versCents(nouveauLoyer);
-    if (cents === null || cents < 0) return setErreur("Entre un loyer valide (ex. 950,00).");
-    if (!moisEffet) return setErreur("Choisis le mois du nouveau loyer.");
-    const ancien = soldes.find((s) => s.mois === moisEffet)?.loyer_cents ?? bail.loyer_cents;
-    const nb = soldes.filter((s) => s.mois >= moisEffet).length;
-    if (!window.confirm(
-      `Le loyer passera de ${formatCents(ancien)} à ${formatCents(cents)} à partir de ${moisLisible(moisEffet)} (${nb} mois). ` +
-      "Les mois précédents et les paiements déjà reçus ne changent pas."
-    )) return;
-    setErreur(null);
-    setEnvoiChangement(true);
-    const { error } = await supabase.rpc("changer_loyer", {
-      p_bail: bail.id, p_date_effet: moisEffet, p_nouveau_cents: cents, p_raison: raison.trim() || null,
-    });
-    setEnvoiChangement(false);
-    if (error) return setErreur(error.message);
-    setChangementOuvert(false);
-    await charger();
-  }
+    })();
+  }, [session, id, chargerDocuments]);
 
   async function supprimer() {
     if (!bail) return;
@@ -189,12 +133,6 @@ export default function DetailBail() {
   const totalDu = soldes.reduce((s, x) => s + x.montant_du_cents, 0);
   const totalRecu = soldes.reduce((s, x) => s + x.recu_cents, 0);
   const enRetard = soldes.filter((s) => s.jours_retard > 0);
-  const moisCourant = auj.slice(0, 7) + "-01";
-  const soldeCourant = soldes.find((s) => s.mois === moisCourant);
-  const moisFuturs = soldes.filter((s) => s.mois >= moisCourant);
-  const prochainChangement = changements
-    .filter((c) => c.date_effet > moisCourant)
-    .sort((a, b) => a.date_effet.localeCompare(b.date_effet))[0];
 
   return (
     <main className="page">
@@ -210,14 +148,7 @@ export default function DetailBail() {
         <>
           <section className="carte">
             <div className="detail-sous" style={{ marginTop: 0 }}>{bail.immeuble} · logement {bail.logement}</div>
-            <div className="detail-total">
-              {formatCents(soldeCourant ? soldeCourant.montant_du_cents : bail.loyer_cents + bail.extras_cents)} <span className="aide">/ mois</span>
-            </div>
-            {prochainChangement && (
-              <div className="aide" style={{ marginTop: 0 }}>
-                Loyer de {formatCents(prochainChangement.nouveau_loyer_cents)} à partir de {moisLisible(prochainChangement.date_effet)}
-              </div>
-            )}
+            <div className="detail-total">{formatCents(bail.loyer_cents + bail.extras_cents)} <span className="aide">/ mois</span></div>
             <span className={`pastille ${bail.statut === "actif" ? "ok" : ""}`}>{LIBELLE_STATUT[bail.statut]}</span>
           </section>
 
@@ -251,54 +182,12 @@ export default function DetailBail() {
             <dl className="champs">
               <dt>Début</dt><dd>{dateLisible(bail.date_debut)}</dd>
               <dt>Fin</dt><dd>{bail.date_fin ? dateLisible(bail.date_fin) : "Durée indéterminée"}</dd>
-              <dt>Loyer</dt>
-              <dd>
-                {formatCents(soldeCourant?.loyer_cents ?? bail.loyer_cents)}
-                {changements.map((c) => (
-                  <div key={c.id} className="aide" style={{ margin: "2px 0 0" }}>
-                    {c.date_effet > moisCourant ? "Dès" : "Depuis"} {moisLisible(c.date_effet)} : {formatCents(c.ancien_loyer_cents)} → {formatCents(c.nouveau_loyer_cents)}
-                    {c.raison ? ` · ${c.raison}` : ""}
-                  </div>
-                ))}
-              </dd>
+              <dt>Loyer</dt><dd>{formatCents(bail.loyer_cents)}</dd>
               {extras.map((e) => (<Fragment key={e.id}><dt>{e.libelle}</dt><dd>{formatCents(e.montant_cents)}</dd></Fragment>))}
               <dt>Paiement</dt><dd>{LIBELLE_MODE[bail.mode_paiement]}, le {bail.jour_echeance}{bail.jour_echeance === 1 ? "er" : ""} du mois</dd>
               {bail.inclusions && (<><dt>Inclusions</dt><dd>{bail.inclusions}</dd></>)}
               {bail.notes && (<><dt>Notes</dt><dd style={{ whiteSpace: "pre-wrap" }}>{bail.notes}</dd></>)}
             </dl>
-
-            {bail.statut !== "termine" && moisFuturs.length > 0 && !changementOuvert && (
-              <button className="bouton plein" style={{ marginTop: 12 }} onClick={ouvrirChangement}>Changer le loyer</button>
-            )}
-            {changementOuvert && (
-              <div className="bloc-locataire">
-                <strong>Nouveau loyer</strong>
-                <label htmlFor="nouveau-loyer">Loyer par mois (sans les extras)</label>
-                <input id="nouveau-loyer" className="montant-total" inputMode="decimal" value={nouveauLoyer}
-                       onChange={(e) => setNouveauLoyer(e.target.value)} />
-                <label htmlFor="mois-effet">À partir de</label>
-                <select id="mois-effet" value={moisEffet} onChange={(e) => setMoisEffet(e.target.value)}>
-                  {moisFuturs.map((s) => (
-                    <option key={s.mois} value={s.mois}>
-                      {moisLisible(s.mois)}{s.recu_cents > 0 ? " (déjà payé en partie ou au complet)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <label htmlFor="raison-changement">Raison</label>
-                <input id="raison-changement" placeholder="ex. Installation d'une thermopompe" value={raison}
-                       onChange={(e) => setRaison(e.target.value)} />
-                <p className="aide">
-                  Jusqu&apos;à la fin du bail{bail.date_fin ? ` (${dateLisible(bail.date_fin)})` : ""}. Les mois précédents et les paiements
-                  déjà reçus restent comme ils sont. Garde l&apos;entente signée avec le locataire dans « Bail signé ».
-                </p>
-                <div className="rangee">
-                  <button className="bouton" onClick={() => setChangementOuvert(false)} disabled={envoiChangement}>Annuler</button>
-                  <button className="bouton principal" onClick={enregistrerChangement} disabled={envoiChangement}>
-                    {envoiChangement ? "Enregistrement…" : "Appliquer"}
-                  </button>
-                </div>
-              </div>
-            )}
           </section>
 
           <section className="carte">
@@ -351,9 +240,6 @@ export default function DetailBail() {
                 <div className="infos">
                   <div className="titre" style={{ textTransform: "capitalize" }}>{moisLisible(s.mois)}</div>
                   {s.en_main_cents > 0 && <div className="sous">Chèque en main : {formatCents(s.en_main_cents)}</div>}
-                  {credits.filter((c) => c.echeance_id === s.echeance_id).map((c) => (
-                    <div key={c.id} className="sous">Crédit {formatCents(c.montant_cents)} · {c.notes}</div>
-                  ))}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div className="montant">{formatCents(s.montant_du_cents)}</div>
@@ -365,7 +251,7 @@ export default function DetailBail() {
                 </div>
               </div>
             ))}
-            <p className="aide">Pour enregistrer un paiement ou un crédit : onglet <Link href="/loyers">Loyers</Link>.</p>
+            <p className="aide">L&apos;enregistrement des loyers reçus arrive dans la version 0.7 (onglet Loyers).</p>
           </section>
 
           <button className="bouton plein lien-danger" onClick={supprimer} disabled={suppression}>
