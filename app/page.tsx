@@ -166,11 +166,18 @@ function ListeDepenses() {
     setErreur(null);
     const { debut, fin } = bornesPeriode(periode, du, au);
     try {
-      const r = await exporterDossier(lignes, `dossier_depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.zip`, setExportEnCours);
+      // Année complète (sans filtre de catégorie ni brouillons seulement) : frais de véhicule inclus
+      const anneeComplete = debut && fin && debut.endsWith("-01-01") && fin === `${debut.slice(0, 4)}-12-31`
+        && !categorieChoisie && statutChoisi !== "brouillon";
+      const r = await exporterDossier(
+        lignes, `dossier_depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.zip`, setExportEnCours,
+        anneeComplete ? { annee: Number(debut!.slice(0, 4)), immeubleIds: immeublesChoisis } : null,
+      );
+      const vehicule = r.vehiculeCents ? ` Frais de véhicule inclus : ${formatCents(r.vehiculeCents)}.` : "";
       setExportResultat(
         r.manquants
-          ? `Dossier créé : ${r.nbRecus} reçus, ${r.manquants} introuvable(s) (voir RECUS_MANQUANTS.txt).`
-          : `Dossier créé avec ${r.nbRecus} reçu(s). Décompresse le ZIP avant d'ouvrir le fichier Excel.`
+          ? `Dossier créé : ${r.nbRecus} reçus, ${r.manquants} introuvable(s) (voir RECUS_MANQUANTS.txt).${vehicule}`
+          : `Dossier créé avec ${r.nbRecus} reçu(s).${vehicule} Décompresse le ZIP avant d'ouvrir le fichier Excel.`
       );
     } catch (e) {
       setErreur(`Export impossible : ${e instanceof Error ? e.message : String(e)}`);

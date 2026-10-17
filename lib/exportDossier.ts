@@ -3,6 +3,10 @@
 //                        + un onglet « Par catégorie » (totaux par ligne T776)
 //   recus/             → chaque photo ou PDF, renommé : 2026-10-16_Simplex_384,13.jpg
 //
+// Pour une année complète, les frais de véhicule s'ajoutent : une ligne par immeuble
+// (part déductible au prorata des km, ligne T776 9281), les onglets du véhicule
+// (résumé, journal de bord, frais) et ses reçus dans recus_vehicule/.
+//
 // Les liens du fichier Excel sont relatifs (recus/...) : il faut DÉCOMPRESSER le ZIP
 // avant d'ouvrir le fichier, sinon Excel ne trouve pas les reçus.
 //
@@ -10,6 +14,8 @@
 // pour ne pas alourdir l'application.
 
 import { supabase, BUCKET_RECUS } from "./supabase";
+import { ajouterVehicule, chargerDonneesVehicule, type DonneesVehicule } from "./exportVehicule";
+import type { ImmeubleVeh } from "./vehicule";
 
 export type LigneExport = {
   depense_id: string;
@@ -36,6 +42,9 @@ export type LigneExport = {
 type Piece = { depense_id: string; storage_key: string; mime_type: string; created_at: string };
 
 export type Progression = (etape: string) => void;
+
+/** Année complète à inclure pour le véhicule ; immeubleIds vide = tous les immeubles */
+export type OptionsVehicule = { annee: number; immeubleIds: string[] };
 
 /** « Rona / Alma : été » → « Rona-Alma-ete » (nom de fichier sûr sur Windows, Mac et iPhone) */
 function nomSur(texte: string): string {
@@ -73,7 +82,9 @@ async function chargerPieces(depenseIds: string[]): Promise<Piece[]> {
   return toutes;
 }
 
-export async function exporterDossier(lignes: LigneExport[], nomZip: string, progression: Progression) {
+export async function exporterDossier(
+  lignes: LigneExport[], nomZip: string, progression: Progression, optionsVehicule?: OptionsVehicule | null,
+) {
   progression("Préparation…");
   const [{ default: ExcelJS }, { default: JSZip }] = await Promise.all([import("exceljs"), import("jszip")]);
 
@@ -117,7 +128,27 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
   }
   await Promise.all([travailleur(), travailleur(), travailleur(), travailleur()]);
 
-  // 3. Fichier Excel
+  // 3. Frais de véhicule de l'année (part des immeubles)
+  type LigneVehicule = { vehicule: { id: string; nom: string }; donnees: DonneesVehicule };
+  const vehicules: LigneVehicule[] = [];
+  let immeublesVeh: ImmeubleVeh[] = [];
+  if (optionsVehicule) {
+    progression("Frais de véhicule…");
+    const [ve, im] = await Promise.all([
+      supabase.from("vehicules").select("id, nom").is("deleted_at", null).order("created_at"),
+      supabase.from("immeubles").select("id, nom, nb_logements").is("deleted_at", null).eq("actif", true).order("nom"),
+    ]);
+    if (ve.error) throw new Error(ve.error.message);
+    if (im.error) throw new Error(im.error.message);
+    immeublesVeh = (im.data ?? []) as ImmeubleVeh[];
+    for (const v of (ve.data ?? []) as { id: string; nom: string }[]) {
+      const donnees = await chargerDonneesVehicule(v.id, optionsVehicule.annee, immeublesVeh);
+      if (donnees.trajets.length || donnees.frais.length) vehicules.push({ vehicule: v, donnees });
+    }
+  }
+  const prefixeVehicule = (nom: string) => (vehicules.length > 1 ? `${nom.slice(0, 14)} - ` : "Véhicule - ");
+
+  // 4. Fichier Excel
   progression("Création du fichier Excel…");
   const classeur = new ExcelJS.Workbook();
   classeur.creator = "Gestion des immeubles";
@@ -180,11 +211,46 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
     }
   }
 
+  // Frais de véhicule : une ligne par immeuble (part déductible)
+  const CATEGORIE_VEHICULE = "Frais de véhicule (part immeubles)";
+  let totalVehiculeCents = 0;
+  for (const { vehicule, donnees } of vehicules) {
+    const r = donnees.resume;
+    const nomResume = `${prefixeVehicule(vehicule.nom)}Résumé`.replace(/[:\\/?*[\]]/g, "-").slice(0, 31);
+    const onglet = `'${nomResume.replace(/'/g, "''")}'!A1`;
+    const pct = r.pourcentage === null ? null : (r.pourcentage * 100).toLocaleString("fr-CA", { maximumFractionDigits: 1 });
+    const base = {
+      date: versDateExcel(`${optionsVehicule!.annee}-12-31`),
+      fournisseur: `Frais de véhicule — ${vehicule.nom}${pct ? ` (${pct} % des km)` : ""}`,
+      logement: "", categorie: CATEGORIE_VEHICULE, parent: CATEGORIE_VEHICULE, t776: "9281", nature: "Courante",
+      paiement: "", nofacture: "", statut: "Calculé",
+    };
+    const lignesIm = r.parImmeuble.filter((p) =>
+      p.deductible > 0 && (!optionsVehicule!.immeubleIds.length || optionsVehicule!.immeubleIds.includes(p.id)));
+    if (r.deductible === null && r.fraisTotal > 0) {
+      const rang = feuille.addRow({
+        ...base, immeuble: "", montant: null,
+        notes: `${(r.fraisTotal / 100).toFixed(2).replace(".", ",")} $ de frais : part impossible à calculer, il manque un relevé du compteur.`,
+      });
+      rang.getCell("recu").value = { text: "Voir l'onglet du véhicule", hyperlink: `#${onglet}` };
+    }
+    for (const p of lignesIm) {
+      totalVehiculeCents += p.deductible;
+      const rang = feuille.addRow({
+        ...base, immeuble: p.nom, montant: p.deductible / 100,
+        notes: `Prorata : ${r.kmImmeubles.toLocaleString("fr-CA")} km immeubles / ${(r.kmTotal ?? 0).toLocaleString("fr-CA")} km totaux` +
+          `${r.provisoire ? " (provisoire : relevé de fin d'année manquant)" : ""}. DPA non incluse.`,
+      });
+      rang.getCell("recu").value = { text: "Voir l'onglet du véhicule", hyperlink: `#${onglet}` };
+      rang.getCell("recu").font = { color: { argb: "FF1B4D34" }, underline: true };
+    }
+  }
+
   // Ligne de total
   const derniere = feuille.rowCount;
   const total = feuille.addRow({ fournisseur: "TOTAL" });
   // « result » : affiché tel quel par l'aperçu iPhone, qui n'évalue pas les formules.
-  const totalCents = lignes.reduce((t, l) => t + (l.montant_cents ?? 0), 0);
+  const totalCents = lignes.reduce((t, l) => t + (l.montant_cents ?? 0), 0) + totalVehiculeCents;
   total.getCell("montant").value = { formula: `SUM(I2:I${derniere})`, result: totalCents / 100 };
   total.font = { bold: true };
 
@@ -210,6 +276,9 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
     g.cents += l.montant_cents ?? 0;
     groupes.set(cle, g);
   }
+  if (totalVehiculeCents > 0) {
+    groupes.set(`${CATEGORIE_VEHICULE}|Courante`, { cat: CATEGORIE_VEHICULE, t776: "9281", nature: "Courante", cents: totalVehiculeCents });
+  }
   Array.from(groupes.values())
     .sort((a, b) => b.cents - a.cents)
     .forEach((g) => resume.addRow({ cat: g.cat, t776: g.t776, nature: g.nature, total: g.cents / 100 }));
@@ -217,6 +286,15 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
   totalResume.getCell("total").value = { formula: `SUM(D2:D${resume.rowCount - 1})`, result: totalCents / 100 };
   totalResume.font = { bold: true };
   resume.getRow(1).font = { bold: true };
+
+  // Onglets et reçus du véhicule
+  const manquantsVehicule: string[] = [];
+  for (const { vehicule, donnees } of vehicules) {
+    const r = await ajouterVehicule(classeur, zip, vehicule, optionsVehicule!.annee, immeublesVeh, progression,
+      { dossierRecus: "recus_vehicule", prefixe: prefixeVehicule(vehicule.nom) }, donnees);
+    manquantsVehicule.push(...r.manquants);
+  }
+  manquants.push(...manquantsVehicule);
 
   const tampon = await classeur.xlsx.writeBuffer();
   zip.file("depenses.xlsx", tampon);
@@ -229,10 +307,15 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
     "1. Décompresser ce fichier ZIP (double-clic).\r\n" +
     "2. Ouvrir depenses.xlsx.\r\n" +
     "3. Cliquer sur un lien de la colonne « Reçu » pour ouvrir la photo correspondante.\r\n" +
-    "Les liens ne fonctionnent que si depenses.xlsx et le dossier recus restent ensemble.\r\n"
+    "Les liens ne fonctionnent que si depenses.xlsx et le dossier recus restent ensemble.\r\n" +
+    (vehicules.length
+      ? "\r\nFrais de véhicule : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776, ligne 9281),\r\n" +
+        "calculée au prorata des km. Le détail (journal de bord, frais à 100 %) est dans les onglets « Véhicule »\r\n" +
+        "et les reçus dans le dossier recus_vehicule. L'amortissement (DPA) du véhicule n'est pas inclus.\r\n"
+      : "")
   );
 
-  // 4. ZIP final
+  // 5. ZIP final
   progression("Compression…");
   const contenu = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(contenu);
@@ -244,5 +327,9 @@ export async function exporterDossier(lignes: LigneExport[], nomZip: string, pro
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 
-  return { nbRecus: aTelecharger.length - manquants.length, manquants: manquants.length };
+  return {
+    nbRecus: aTelecharger.length - (manquants.length - manquantsVehicule.length),
+    manquants: manquants.length,
+    vehiculeCents: totalVehiculeCents,
+  };
 }

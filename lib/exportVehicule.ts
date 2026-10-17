@@ -23,42 +23,57 @@ function versDate(iso: string): Date {
 const ARGENT = '#,##0.00 "$"';
 const VERT = "FF1B4D34";
 
-export async function exporterDossierVehicule(
+/** Nom d'onglet Excel valide (31 caractères, sans : \ / ? * [ ]) */
+function nomOnglet(t: string): string {
+  return t.replace(/[:\\/?*[\]]/g, "-").slice(0, 31);
+}
+
+/** Charge les relevés, trajets et frais d'une année et calcule le prorata */
+export async function chargerDonneesVehicule(vehiculeId: string, annee: number, immeubles: ImmeubleVeh[]) {
+  const debut = `${annee}-01-01`;
+  const fin = `${annee}-12-31`;
+  const [re, de, fr] = await Promise.all([
+    supabase.from("releves_odometre").select("date_releve, km").eq("vehicule_id", vehiculeId).is("deleted_at", null),
+    supabase.from("deplacements").select("date_trajet, km, immeuble_id, motif, destination")
+      .eq("vehicule_id", vehiculeId).is("deleted_at", null).gte("date_trajet", debut).lte("date_trajet", fin).order("date_trajet"),
+    supabase.from("frais_vehicule").select("id, date_frais, type, montant_cents, fournisseur, notes, storage_key, mime_type")
+      .eq("vehicule_id", vehiculeId).is("deleted_at", null).gte("date_frais", debut).lte("date_frais", fin).order("date_frais"),
+  ]);
+  const err = [re, de, fr].find((x) => x.error)?.error;
+  if (err) throw new Error(err.message);
+  const releves = ((re.data ?? []) as { date_releve: string; km: number }[]).map((x) => ({ ...x, km: Number(x.km) }));
+  const trajets = ((de.data ?? []) as Deplacement[]).map((t) => ({ ...t, km: Number(t.km) }));
+  const frais = (fr.data ?? []) as FraisLigne[];
+  return { trajets, frais, resume: calculerResume(annee, releves, trajets, frais, immeubles) };
+}
+export type DonneesVehicule = Awaited<ReturnType<typeof chargerDonneesVehicule>>;
+
+/**
+ * Ajoute les 3 onglets du véhicule (Résumé, Journal de bord, Frais) à un classeur
+ * et ses reçus dans un dossier du ZIP. Sert à l'export Véhicule et au dossier comptable.
+ */
+export async function ajouterVehicule(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  classeur: any, zip: any,
   vehicule: { id: string; nom: string },
   annee: number,
   immeubles: ImmeubleVeh[],
   progression: (etape: string) => void,
+  opts: { dossierRecus: string; prefixe: string },
+  donnees?: DonneesVehicule,
 ) {
-  progression("Préparation…");
-  const [{ default: ExcelJS }, { default: JSZip }] = await Promise.all([import("exceljs"), import("jszip")]);
-  const debut = `${annee}-01-01`;
-  const fin = `${annee}-12-31`;
-
-  const [re, de, fr] = await Promise.all([
-    supabase.from("releves_odometre").select("date_releve, km").eq("vehicule_id", vehicule.id).is("deleted_at", null),
-    supabase.from("deplacements").select("date_trajet, km, immeuble_id, motif, destination")
-      .eq("vehicule_id", vehicule.id).is("deleted_at", null).gte("date_trajet", debut).lte("date_trajet", fin).order("date_trajet"),
-    supabase.from("frais_vehicule").select("id, date_frais, type, montant_cents, fournisseur, notes, storage_key, mime_type")
-      .eq("vehicule_id", vehicule.id).is("deleted_at", null).gte("date_frais", debut).lte("date_frais", fin).order("date_frais"),
-  ]);
-  const err = [re, de, fr].find((r) => r.error)?.error;
-  if (err) throw new Error(err.message);
-  const releves = (re.data ?? []) as { date_releve: string; km: number }[];
-  const trajets = ((de.data ?? []) as Deplacement[]).map((t) => ({ ...t, km: Number(t.km) }));
-  const frais = (fr.data ?? []) as FraisLigne[];
-  const r = calculerResume(annee, releves, trajets, frais, immeubles);
+  const { trajets, frais, resume: r } = donnees ?? (await chargerDonneesVehicule(vehicule.id, annee, immeubles));
   const nomImmeuble = (id: string | null) => (id ? immeubles.find((i) => i.id === id)?.nom ?? "" : "Plusieurs immeubles");
   const libelleType = (c: string) => TYPES_FRAIS.find((t) => t.code === c)?.libelle ?? c;
 
   // Reçus
-  const zip = new JSZip();
-  const dossier = zip.folder("recus")!;
+  const dossier = zip.folder(opts.dossierRecus)!;
   const nomRecu = new Map<string, string>();
   const manquants: string[] = [];
   const avecRecu = frais.filter((f) => f.storage_key);
   for (let i = 0; i < avecRecu.length; i++) {
     const f = avecRecu[i];
-    progression(`Reçus ${i + 1} / ${avecRecu.length}`);
+    progression(`Reçus du véhicule ${i + 1} / ${avecRecu.length}`);
     const ext = f.mime_type === "application/pdf" ? "pdf" : "jpg";
     const nom = `${f.date_frais}_${nomSur(libelleType(f.type).split(" ")[0])}_${nomSur(f.fournisseur ?? "")}_${(f.montant_cents / 100).toFixed(2).replace(".", ",")}_${i + 1}.${ext}`;
     const { data, error } = await supabase.storage.from(BUCKET_RECUS).download(f.storage_key!);
@@ -66,13 +81,8 @@ export async function exporterDossierVehicule(
     else { dossier.file(nom, data); nomRecu.set(f.id, nom); }
   }
 
-  progression("Création du fichier Excel…");
-  const classeur = new ExcelJS.Workbook();
-  classeur.creator = "Gestion des immeubles";
-  classeur.created = new Date();
-
   // --- Résumé
-  const res = classeur.addWorksheet("Résumé");
+  const res = classeur.addWorksheet(nomOnglet(`${opts.prefixe}Résumé`));
   res.getColumn(1).width = 44;
   res.getColumn(2).width = 18;
   res.getColumn(3).width = 18;
@@ -139,7 +149,7 @@ export async function exporterDossierVehicule(
   res.getCell(ligne, 1).font = { italic: true, color: { argb: "FF666666" } };
 
   // --- Journal de bord
-  const jou = classeur.addWorksheet("Journal de bord", { views: [{ state: "frozen", ySplit: 1 }] });
+  const jou = classeur.addWorksheet(nomOnglet(`${opts.prefixe}Journal de bord`), { views: [{ state: "frozen", ySplit: 1 }] });
   jou.columns = [
     { header: "Date", key: "date", width: 12, style: { numFmt: "yyyy-mm-dd" } },
     { header: "Immeuble", key: "immeuble", width: 20 },
@@ -157,7 +167,7 @@ export async function exporterDossierVehicule(
   jou.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERT } };
 
   // --- Frais
-  const fra = classeur.addWorksheet("Frais", { views: [{ state: "frozen", ySplit: 1 }] });
+  const fra = classeur.addWorksheet(nomOnglet(`${opts.prefixe}Frais`), { views: [{ state: "frozen", ySplit: 1 }] });
   fra.columns = [
     { header: "Date", key: "date", width: 12, style: { numFmt: "yyyy-mm-dd" } },
     { header: "Type", key: "type", width: 26 },
@@ -173,7 +183,7 @@ export async function exporterDossierVehicule(
     });
     const nom = nomRecu.get(f.id);
     if (nom) {
-      row.getCell("recu").value = { text: nom, hyperlink: `recus/${nom}` };
+      row.getCell("recu").value = { text: nom, hyperlink: `${opts.dossierRecus}/${nom}` };
       row.getCell("recu").font = { color: { argb: VERT }, underline: true };
     } else {
       row.getCell("recu").value = "Aucun reçu";
@@ -186,6 +196,26 @@ export async function exporterDossierVehicule(
   fra.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   fra.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERT } };
 
+  return { resume: r, trajets: trajets.length, frais: frais.length, manquants, ongletResume: res.name as string };
+}
+
+export async function exporterDossierVehicule(
+  vehicule: { id: string; nom: string },
+  annee: number,
+  immeubles: ImmeubleVeh[],
+  progression: (etape: string) => void,
+) {
+  progression("Préparation…");
+  const [{ default: ExcelJS }, { default: JSZip }] = await Promise.all([import("exceljs"), import("jszip")]);
+  const zip = new JSZip();
+  const classeur = new ExcelJS.Workbook();
+  classeur.creator = "Gestion des immeubles";
+  classeur.created = new Date();
+  const { trajets, frais, manquants } = await ajouterVehicule(
+    classeur, zip, vehicule, annee, immeubles, progression, { dossierRecus: "recus", prefixe: "" },
+  );
+
+  progression("Création du fichier Excel…");
   zip.file(`vehicule_${annee}.xlsx`, await classeur.xlsx.writeBuffer());
   if (manquants.length) zip.file("RECUS_MANQUANTS.txt", manquants.join("\r\n"));
   zip.file(
@@ -206,5 +236,5 @@ export async function exporterDossierVehicule(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  return { trajets: trajets.length, frais: frais.length, manquants: manquants.length };
+  return { trajets, frais, manquants: manquants.length };
 }
