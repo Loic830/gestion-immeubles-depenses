@@ -116,7 +116,7 @@ export async function exporterDossierPreteur(
     { titre: "Début du bail", cle: "debut", largeur: 13, format: "yyyy-mm-dd" },
     { titre: "Fin du bail", cle: "fin", largeur: 13, format: "yyyy-mm-dd" },
     { titre: "Loyer mensuel", cle: "loyer", largeur: 14, format: argent },
-    { titre: "Extras mensuels", cle: "extras", largeur: 14, format: argent },
+    { titre: "Extras / crédits", cle: "extras", largeur: 14, format: argent },
     { titre: "Total mensuel", cle: "total", largeur: 14, format: argent },
     { titre: "Total annuel", cle: "annuel", largeur: 15, format: argent },
     { titre: "Paiement", cle: "paiement", largeur: 18 },

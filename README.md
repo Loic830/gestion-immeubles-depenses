@@ -1,7 +1,7 @@
 # Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.1 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.4 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -21,6 +21,7 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
    et `annuler_fin_bail`.
 7. `supabase/007_vehicule.sql` — véhicule : véhicules, relevés du compteur, trajets fréquents,
    journal de bord (déplacements) et frais du véhicule.
+9. `supabase/009_credits_mensuels.sql` — extras négatifs = crédits récurrents (ex. tonte de pelouse −50 $/mois).
 8. `supabase/008_lieux_distances.sql` — lieux (Maison + immeubles, puis Rona, BMR…) et distances
    entre deux lieux, pour composer des trajets.
 
@@ -178,6 +179,9 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - % = km du journal / km du compteur ; part déductible = frais × % ; répartie par immeuble selon ses km,
   les trajets « Plusieurs » selon le nombre de logements.
 - Export par année : vehicule_AAAA.xlsx (Résumé, Journal de bord, Frais) + reçus. La DPA est laissée au comptable.
+- Dossier comptable (onglet Dépenses) sur une année complète (« Cette année », « Année dernière » ou 1er janv.–31 déc.,
+  sans filtre de catégorie) : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776 ligne 9281) dans
+  depenses.xlsx, comprise dans les totaux et « Par catégorie », + onglets « Véhicule - … » et dossier recus_vehicule/.
 
 ## Thème
 
@@ -193,6 +197,10 @@ dossier_depenses_2026-01-01_2026-12-31.zip
   « Crédit au locataire » dans la feuille de paiement (montant + raison obligatoire ; le loyer reste dû au complet).
 - 0.7.5 : « Terminer le bail (départ du locataire) » : date de départ, montant forfaitaire ajouté au dernier mois, raison ;
   loyers futurs retirés, historique gardé ; « Entrer le nouveau bail » (logement et date préremplis) ; autres baux du logement.
+- 0.8.3 : formulaire de dépense : fournisseur, catégorie et date restent en place en mode répartition
+  (l'immeuble et la répartition viennent après la date) ; la catégorie du haut s'applique à toutes les lignes.
+- 0.8.4 : « − Ajouter un crédit » dans Nouveau bail : crédit déduit chaque mois (montant négatif dans bail_extras) ;
+  le total dû du mois ne peut pas être négatif.
 
 ## Limites connues
 

@@ -13,7 +13,7 @@ type Immeuble = { id: string; nom: string };
 type Logement = { id: string; immeuble_id: string; numero: string };
 type LocataireExistant = { id: string; prenom: string; nom: string };
 type LocataireForm = { cle: string; existantId: string; prenom: string; nom: string; telephone: string; courriel: string };
-type ExtraForm = { cle: string; libelle: string; montantSaisi: string };
+type ExtraForm = { cle: string; libelle: string; montantSaisi: string; credit?: boolean }; // credit = déduit chaque mois
 type Duree = "12" | "autre" | "indeterminee";
 type Mode = "interac" | "cheque" | "prelevement" | "comptant";
 
@@ -82,7 +82,8 @@ function NouveauBail() {
 
   const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
   const loyerCents = versCents(loyerSaisi);
-  const extrasCents = extras.reduce((s, e) => s + (versCents(e.montantSaisi) ?? 0), 0);
+  const signe = (e: ExtraForm) => (e.credit ? -1 : 1);
+  const extrasCents = extras.reduce((s, e) => s + signe(e) * (versCents(e.montantSaisi) ?? 0), 0);
 
   async function ajouterPages(liste: FileList | null) {
     if (!liste || liste.length === 0) return;
@@ -148,7 +149,8 @@ function NouveauBail() {
     if (locs.length === 0) return setErreur("Ajoute au moins un locataire.");
     if (locs.some((l) => !l.existantId && (!l.prenom.trim() || !l.nom.trim()))) return setErreur("Chaque nouveau locataire a besoin d'un prénom et d'un nom.");
     const ext = extras.filter((e) => e.libelle.trim() || e.montantSaisi.trim());
-    if (ext.some((e) => !e.libelle.trim() || versCents(e.montantSaisi) === null)) return setErreur("Chaque extra a besoin d'un libellé et d'un montant.");
+    if (ext.some((e) => !e.libelle.trim() || !versCents(e.montantSaisi))) return setErreur("Chaque extra ou crédit a besoin d'un libellé et d'un montant.");
+    if (loyerCents + extrasCents < 0) return setErreur("Les crédits dépassent le loyer : le total dû chaque mois ne peut pas être négatif.");
 
     setEnvoi("Enregistrement…");
     const { data, error } = await supabase.rpc("creer_bail", {
@@ -164,7 +166,7 @@ function NouveauBail() {
         locataires: locs.map((l) => l.existantId
           ? { id: l.existantId }
           : { prenom: l.prenom, nom: l.nom, telephone: l.telephone || null, courriel: l.courriel || null }),
-        extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: versCents(e.montantSaisi) })),
+        extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: signe(e) * (versCents(e.montantSaisi) ?? 0) })),
       },
     });
     if (error) {
@@ -272,17 +274,29 @@ function NouveauBail() {
         <label htmlFor="loyer">Loyer mensuel</label>
         <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
 
-        <label>Extras facturés chaque mois</label>
+        <label>Extras et crédits chaque mois</label>
         {extras.map((e) => (
           <div className="rangee" key={e.cle} style={{ marginBottom: 8, alignItems: "center" }}>
-            <input placeholder="ex. Stationnement" value={e.libelle} onChange={(ev) => majExtra(e.cle, { libelle: ev.target.value })} />
-            <input placeholder="Montant" inputMode="decimal" value={e.montantSaisi} onChange={(ev) => majExtra(e.cle, { montantSaisi: ev.target.value })} />
+            <input placeholder={e.credit ? "ex. Tonte de pelouse" : "ex. Stationnement"} value={e.libelle}
+                   aria-label={e.credit ? "Raison du crédit" : "Libellé de l'extra"}
+                   onChange={(ev) => majExtra(e.cle, { libelle: ev.target.value })} />
+            <div style={{ position: "relative" }}>
+              <span aria-hidden="true" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontWeight: 700,
+                                                color: e.credit ? "var(--succes)" : "var(--discret)" }}>{e.credit ? "−" : "+"}</span>
+              <input placeholder="Montant" inputMode="decimal" value={e.montantSaisi} style={{ paddingLeft: 28, width: "100%" }}
+                     aria-label={e.credit ? "Montant du crédit (déduit)" : "Montant de l'extra"}
+                     onChange={(ev) => majExtra(e.cle, { montantSaisi: ev.target.value })} />
+            </div>
             <button type="button" className="lien-retirer" style={{ flex: "0 0 auto" }} onClick={() => setExtras((a) => a.filter((x) => x.cle !== e.cle))} aria-label="Retirer l'extra">×</button>
           </div>
         ))}
         <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
                 onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "" }])}>
           + Ajouter un extra
+        </button>
+        <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
+                onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "", credit: true }])}>
+          − Ajouter un crédit (ex. tonte de pelouse)
         </button>
         {loyerCents !== null && (
           <p className="aide"><strong>Total dû chaque mois : {formatCents(loyerCents + extrasCents)}</strong></p>
