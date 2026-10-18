@@ -1,0 +1,228 @@
+# Passation — Gestion des immeubles
+
+> Document de référence pour reprendre le projet : à lire en premier, par une personne
+> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.6**.
+> Le `README.md` complète ce document (détail de chaque écran et historique des versions).
+
+---
+
+## 1. Le projet en bref
+
+Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3 immeubles à Alma** (21 logements) :
+
+| Immeuble | Logements | Numérotation |
+| --- | --- | --- |
+| Gauthier | 9 | 1 à 9 |
+| Robert-Jean | 8 | numéros civiques 680 à 69x |
+| Camélias | 4 | 2130 à 2136 |
+
+**Personnes**
+- **Maxime** : propriétaire, utilisateur principal (iPhone). Parle français québécois.
+- **Conjointe de Maxime** : utilisatrice (compte séparé). Tout le monde voit tout.
+- **Loïc** (fils) : déploie et valide les choix techniques. Compte Supabase et Vercel.
+- **Comptable** : reçoit les exports annuels (T776 fédéral, TP-128 Québec).
+
+**Ce que l'app fait aujourd'hui** : en-tête « Immeubles So-Max » (cloche, avatar → Profil et Actifs) et
+5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
+1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois).
+2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, filtres, export CSV, dossier comptable (Excel + reçus en ZIP, frais de véhicule inclus sur une année complète).
+3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL, dossier prêteur par immeuble.
+4. **Véhicule** 🚗 : journal de bord (km), trajets fréquents composés de lieux, frais du véhicule, relevés du compteur, prorata déductible par immeuble, export.
+5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
+6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs (ajout d'immeuble, logements, vente).
+
+---
+
+## 2. Technique
+
+| Élément | Choix |
+| --- | --- |
+| Interface | Next.js 15 (App Router), React 19, TypeScript ; **tous les écrans sont des composants client** (`"use client"`) |
+| Données | Supabase (Postgres, Auth, Storage) via `@supabase/supabase-js`, session côté client |
+| Exports | ExcelJS et JSZip, **chargés seulement au clic** (`import()` dynamique) |
+| Hébergement | Vercel, déploiement automatique depuis la branche **`main`** |
+| Projet Supabase | « Gestion des immeubles » (compte de Loïc) |
+| Variables | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (voir `.env.local.example`) |
+
+**Sécurité**
+- Inscriptions publiques **désactivées** ; les comptes sont créés à la main dans Supabase.
+- RLS activé partout, politique unique `acces_authentifie` : tout utilisateur connecté lit et écrit tout.
+- Bucket Storage **privé** `recus` (15 Mo, jpeg/webp/pdf), sans politique de suppression. Dossiers :
+  `AAAA/MM/…` (reçus de dépenses), `baux/AAAA/MM/…` (baux signés), `vehicule/AAAA/MM/…` (reçus du véhicule).
+  Affichage par URL signées (10 min).
+
+**Conventions de code (à respecter)**
+- **Argent en cents entiers** (`bigint`), jamais de décimales en base. Affichage : `formatCents` ; saisie : `versCents` (`lib/argent.ts`).
+- **Dates en chaînes `AAAA-MM-JJ`**, jamais d'objet `Date` pour stocker (évite les décalages de fuseau) : `lib/dates.ts`.
+- **Suppression douce** (`deleted_at`) : on ne supprime jamais une dépense, un bail ou un paiement.
+- Opérations à plusieurs tables = **fonctions RPC** en une transaction (`enregistrer_depense`, `creer_bail`, `changer_loyer`, `terminer_bail`…).
+- Statuts calculés, jamais saisis (ex. statut d'un bail dans `v_baux`).
+- Vues en `security_invoker = true`.
+- Interface **en français**, textes courts, gros boutons ; écrans pensés pour le téléphone d'abord.
+- Exports Excel : toujours écrire `result` à côté d'une `formula` (l'aperçu de l'iPhone n'évalue pas les formules).
+- Images traitées sur le téléphone avant l'envoi (`lib/image.ts`) : 2000 px, JPEG 0,8, miniature 400 px, EXIF/GPS retirés, empreinte SHA-256.
+
+---
+
+## 3. Base de données — migrations
+
+Fichiers dans `supabase/`, à exécuter **une seule fois chacun, dans l'ordre**, dans Supabase > SQL Editor.
+Un message « already exists » signifie que le fichier a déjà été exécuté.
+
+| # | Fichier | Contenu | État |
+| --- | --- | --- | --- |
+| 001 | `001_module1_schema.sql` | immeubles, logements, catégories (codes T776), fournisseurs, modes de paiement, dépenses, lignes, pièces jointes, bucket, RLS | exécuté |
+| 002 | `002_enregistrer_depense.sql` | RPC `enregistrer_depense` | exécuté |
+| 003 | `003_modifier_depense.sql` | RPC `modifier_depense` | exécuté |
+| 004 | `004_module2_loyers.sql` | locataires, baux, extras, échéances, paiements, renouvellements, documents ; `creer_bail`, `generer_echeances`, `prolonger_echeances`, `fenetre_avis`, `occupation` ; vues `v_soldes`, `v_baux` | exécuté |
+| 005 | `005_changement_loyer_credits.sql` | `changements_loyer`, RPC `changer_loyer` ; mode de paiement `credit` | exécuté |
+| 006 | `006_fin_de_bail.sql` | `fins_bail`, RPC `terminer_bail`, `annuler_fin_bail` | exécuté |
+| 007 | `007_vehicule.sql` | véhicules, relevés du compteur, trajets favoris, déplacements, frais du véhicule | **à confirmer** |
+| 008 | `008_lieux_distances.sql` | lieux, distances entre lieux, `trajets_favoris.etapes` | **à confirmer** |
+| 009 | `009_credits_mensuels.sql` | extras négatifs (crédits mensuels), `annuler_fin_bail` corrigée | **à confirmer** |
+| 010 | `010_profil_actifs.sql` | `immeubles` : valeur d'achat, date et prix de vente (v0.8.5) | **à confirmer** |
+| 011 | `011_frais_fixes.sql` | `hypotheques`, `hypotheque_releves`, `assurances`, `taxes_versements` ; `documents.bail_id` facultatif + type `assurance` ; RPC `payer_frais_fixe`, `annuler_paiement_frais_fixe` (v0.8.6) | **à exécuter** |
+
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `012_notifications.sql`.
+> Vérifier aussi que les fichiers 005 à 011 sont bien poussés dans le dépôt GitHub.
+
+**Modèle — points clés**
+- `depenses` (en-tête, `statut` brouillon/complete) → `depense_lignes` (une par immeuble/catégorie ; somme des lignes = total, vérifiée par trigger différé) → `pieces_jointes`.
+- `baux` (contrainte d'exclusion : pas de chevauchement sur un logement ; `date_fin` vide = durée indéterminée ; `date_depart` = départ réel) → `bail_locataires` (un principal) → `bail_extras` (montant positif = extra, **négatif = crédit mensuel**).
+- `echeances` : un loyer dû par bail et par mois (`loyer_cents + extras_cents` = `montant_du_cents`, colonne générée ; total ≥ 0).
+- `paiements` : statut `recu` / `en_main` / `sans_provision` ; mode `interac` / `cheque` / `prelevement` / `comptant` / `credit` (crédit : raison obligatoire dans `notes`).
+- `v_soldes` : dû, reçu, chèques en main, solde, jours de retard par échéance.
+- Fenêtre d'avis TAL (C.c.Q. art. 1942) : bail de 12 mois ou plus → 6 à 3 mois avant la fin ; moins de 12 mois → 2 à 1 mois avant.
+
+**Tester le SQL sans toucher à la vraie base** : une copie locale PostgreSQL 16 avec un fichier de remplacement
+(`stub.sql`) qui crée les schémas `auth`/`storage`, les rôles `authenticated`/`anon`, `auth.uid()` et les tables
+`storage.buckets`/`storage.objects`. Chaque migration a été testée ainsi avant d'être livrée.
+
+---
+
+## 4. Carte des fichiers
+
+**Attention : il y a 13 fichiers `page.tsx`.** Ne jamais se fier au nom du fichier seul ; chacun se reconnaît
+à sa ligne `export default function` :
+
+| Chemin | Écran | `export default function` |
+| --- | --- | --- |
+| `app/page.tsx` | onglet **Dépenses** (liste, filtres, exports) | `Accueil` |
+| `app/nouvelle/page.tsx` | nouvelle dépense | `NouvelleDepense` |
+| `app/depense/[id]/page.tsx` | détail d'une dépense | `DetailDepense` |
+| `app/depense/[id]/modifier/page.tsx` | modifier / compléter | `ModifierDepense` |
+| `app/loyers/page.tsx` | onglet **Loyers** | `PageLoyers` |
+| `app/baux/page.tsx` | onglet **Baux** (liste) | `PageBaux` |
+| `app/baux/nouveau/page.tsx` | nouveau bail | `PageNouveauBail` |
+| `app/baux/[id]/page.tsx` | fiche du bail | `DetailBail` |
+| `app/vehicule/page.tsx` | onglet **Véhicule** | `PageVehicule` |
+| `app/login/page.tsx` | connexion | `PageConnexion` |
+| `app/frais-fixes/page.tsx` | onglet **Frais fixes** | `PageFraisFixes` |
+| `app/profil/page.tsx` | Profil et Actifs | `PageProfil` |
+| `app/profil/immeubles/[id]/page.tsx` | détail d'un immeuble | `PageDetailImmeuble` |
+
+**Composants et bibliothèques**
+
+| Fichier | Rôle |
+| --- | --- |
+| `components/BarreOnglets.tsx` | barre d'onglets du bas (Loyers · Baux · Frais fixes · Dépenses · Véhicule) |
+| `components/EnTete.tsx` | en-tête fixe : nom de l'app, cloche (tiroir de notifications, vide jusqu'à 0.8.7), avatar → Profil |
+| `components/FeuillePret.tsx`, `FeuilleReleve.tsx`, `FeuilleAssurance.tsx`, `FeuilleTaxes.tsx`, `FeuillePaiement.tsx` | feuilles (formulaires du bas) de la page Frais fixes |
+| `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels |
+| `lib/fraisFixes.ts` | types Frais fixes, intérêts de l'année (relevé prioritaire), statut des versements, totaux |
+| `components/FormulaireDepense.tsx` | formulaire partagé saisie/modification ; ordre : montant, fournisseur, catégorie, date, immeuble ou répartition |
+| `components/ChoixFournisseur.tsx` | champ fournisseur avec menu (recherche sans accents, plus utilisés en premier) |
+| `components/ConstructeurTrajet.tsx` | composer un trajet par lieux, distances retenues dans les deux sens |
+| `lib/supabase.ts` | client Supabase, `BUCKET_RECUS = "recus"` |
+| `lib/useSession.ts` | session et redirection vers la connexion |
+| `lib/argent.ts` | cents, TPS 5 % / TVQ 9,975 % |
+| `lib/dates.ts` | dates AAAA-MM-JJ, fin de bail, lendemain, fin du mois, `ajouterMois`, tri naturel des numéros |
+| `lib/image.ts` | compression, miniature, EXIF, SHA-256 |
+| `lib/periodes.ts` | périodes de filtre (mois, trimestre, année…) |
+| `lib/repartition.ts` | répartition au cent près (méthode du plus fort reste) |
+| `lib/csv.ts` | CSV pour Excel français (`;`, virgule décimale, BOM UTF-8) |
+| `lib/exportDossier.ts` | dossier comptable : `depenses.xlsx` + `recus/` (+ véhicule sur une année complète) |
+| `lib/exportBaux.ts` | dossier prêteur : `etat_des_loyers.xlsx` + `baux/` |
+| `lib/vehicule.ts` | calcul du prorata (km immeubles / km totaux), segments de trajets |
+| `lib/exportVehicule.ts` | onglets et reçus du véhicule (seul ou dans le dossier comptable) |
+| `app/globals.css` | thème vert, clair et sombre (contrastes ≥ 7:1) |
+| `public/` | icônes et manifeste (fournis par Loïc) |
+
+---
+
+## 5. Règles d'affaires et fiscales retenues
+
+- **Dépenses** : catégories liées aux lignes du T776 ; nature « courante » ou « capital » (amortissable). Un fournisseur retient sa catégorie habituelle. Doublons détectés (même photo, ou même fournisseur + même numéro de facture).
+- **Répartition** : par parts égales ou au prorata des logements (9/8/4), au cent près.
+- **Changement de loyer** : s'applique d'un mois donné jusqu'à la fin du bail ; le passé et les paiements restent ; historique dans `changements_loyer`. Au Québec, une hausse en cours de bail demande l'accord écrit du locataire (entente à joindre dans « Bail signé »).
+- **Crédit ponctuel** (ex. porte achetée par le locataire) : paiement de mode `credit` avec raison ; le loyer reste dû au complet (revenu brut intact) ; la dépense correspondante s'entre aussi dans Dépenses.
+- **Crédit mensuel** (ex. tonte de pelouse −50 $) : extra négatif sur le bail ; le revenu est alors inscrit net (à signaler au comptable ; le rapport v1.0 devra l'afficher à part).
+- **Fin de bail** : `date_depart` inscrite, loyers futurs sans paiement retirés, forfait ajouté au dernier mois, suivi TAL arrêté ; bloqué si des paiements existent après le départ ; annulable tant qu'aucun nouveau bail n'occupe le logement.
+- **Hypothèques** : prêts à taux fixe canadiens, intérêt composé deux fois par année ; taux par versement mensuel
+  i = (1 + taux/2)^(2/12) − 1 ; intérêts = solde × i au cent ; les versements datés dans l'année comptent pour l'année.
+  Rien n'est stocké : recalcul à partir du prêt. Le relevé annuel du prêteur a priorité (avertissement au-delà de 1 % d'écart).
+  Total des intérêts = T776 ligne 8710 / TP-128. Un renouvellement = un nouveau terme (nouvelle ligne). Les versements
+  hypothécaires ne vont pas dans Dépenses.
+- **Assurances et taxes** : « Payé » inscrit la dépense dans Dépenses (catégorie 8690 ou 9180, immeuble du versement) en une
+  transaction ; « Annuler » la retire (suppression douce). Assurance mensuelle : la dépense est la prime de l'année au complet.
+- **Véhicule** : avec des immeubles sur au moins deux sites, les frais pour percevoir les loyers, superviser des travaux ou gérer sont déductibles **au prorata des km**. Frais entrés à 100 % ; part = frais × km immeubles / km totaux (compteur au 1er janvier et au 31 décembre, tolérance 31 jours) ; trajets « Plusieurs immeubles » répartis selon le nombre de logements ; ligne T776 **9281** dans le dossier comptable. La DPA (amortissement) n'est pas calculée : laissée au comptable.
+
+---
+
+## 6. Façon de travailler (important)
+
+**Livraison des mises à jour**
+- Claude ne peut pas toujours installer les paquets npm ni compiler l'app : **Loïc compile et déploie**.
+  (La v0.8.6 a été compilée avec succès par Claude, `npm run build`, avant la livraison.)
+  Claude vérifie la syntaxe TypeScript, teste le SQL sur une copie locale et les calculs avec Node.
+- Chaque mise à jour est livrée en **ZIP avec les fichiers déjà rangés dans leurs dossiers** et un
+  `LISEZMOI_MISE_A_JOUR.txt` : quels fichiers, quel SQL, dans quel ordre. Loïc décompresse **à la racine du projet**
+  par-dessus les fichiers existants, exécute le SQL s'il y en a, puis fait un commit sur `main`.
+- **Ne jamais envoyer des `page.tsx` en vrac** : un mélange a déjà remplacé l'onglet Dépenses par l'écran Nouveau bail.
+- Faire le travail sur le code **dans une seule conversation** (celle qui a les fichiers). Une autre conversation
+  n'a pas les fichiers : elle doit partir de ce document et du ZIP complet le plus récent.
+- Les bugs remontent par capture d'écran (Maxime transfère les messages de Loïc).
+
+**iPhone : pièges connus**
+- Le signet doit pointer vers le **domaine de production** Vercel, pas une URL de prévisualisation.
+- Le clavier `inputMode="decimal"` n'a **pas de signe moins** : prévoir un bouton (ex. « − Ajouter un crédit »).
+- `<datalist>` s'affiche mal : utiliser un menu maison (`ChoixFournisseur`).
+- Champs `date` : correctif CSS de débordement déjà en place dans `globals.css`.
+- L'aperçu Excel de l'iPhone n'évalue pas les formules (voir conventions).
+- Pas de mode hors ligne : sans réseau, l'envoi échoue avec un message.
+
+---
+
+## 7. Limites connues
+
+- Un fichier téléversé reste orphelin dans le bucket si l'enregistrement échoue ensuite (sans conséquence).
+- Plafond de 1000 lignes par affichage dans la liste des dépenses (limite Supabase par défaut).
+- Exports faits dans le navigateur : préférer un ordinateur pour une année complète avec beaucoup de reçus.
+- Fin de bail en milieu de mois : le dernier loyer reste complet (ajuster avec un crédit).
+- Les km ne se calculent pas à partir d'une carte : la distance entre deux lieux s'entre une fois à la main.
+
+---
+
+## 8. À faire
+
+**Proposé à Maxime, en attente de réponse**
+- Bouton « Modifier » sur la fiche du bail pour les **coordonnées des locataires** (téléphone, courriel).
+- Ajouter ou retirer un **extra / crédit mensuel sur un bail existant**, à partir d'un mois donné (comme « Changer le loyer »).
+
+**Feuille de route**
+0. **v0.8.7** : centre de notifications (tiroir de la cloche) : fin de terme hypothécaire (120, 60, 30 jours), assurances (30, 7 jours),
+   taxes (14, 3 jours), avis TAL ; table `notifications` + calcul quotidien `pg_cron` (migration 012). Les dates sont déjà dans
+   `hypotheques.fin_terme`, `assurances.date_renouvellement`, `taxes_versements.echeance` (non payés).
+1. **v0.8.x** : série de chèques postdatés en un geste, confirmation des prélèvements, chèques sans provision, reçu pour paiement comptant.
+2. **v0.9** : renouvellements TAL (envoi de l'avis, réponse du locataire, preuve) et suivi des logements vacants.
+3. **v1.0** : rapport annuel par immeuble (revenus bruts, crédits, dépenses par ligne T776 / TP-128, véhicule, intérêts hypothécaires via `lib/fraisFixes.ts`), prêt pour le comptable.
+
+**Recommandation en cours** : entrer les 21 baux et utiliser l'app pendant un mois de loyers avant d'entreprendre la v0.8.x.
+
+---
+
+## 9. Pour une nouvelle conversation avec Claude
+
+Donner ce document **et** le ZIP complet le plus récent du projet (`gestion-immeubles-vX.zip`), puis demander :
+> « Voici la passation et le code du projet. Lis PASSATION.md, puis [demande]. Livre les changements en ZIP
+> rangé par dossiers avec un LISEZMOI_MISE_A_JOUR.txt, et la migration SQL suivante s'il y en a une. »

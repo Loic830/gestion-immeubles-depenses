@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -25,6 +25,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 8. `supabase/008_lieux_distances.sql` — lieux (Maison + immeubles, puis Rona, BMR…) et distances
    entre deux lieux, pour composer des trajets.
 10. `supabase/010_profil_actifs.sql` — valeur d'achat et vente d'un immeuble (v0.8.5).
+11. `supabase/011_frais_fixes.sql` — Frais fixes : hypotheques, hypotheque_releves, assurances, taxes_versements ;
+    RPC `payer_frais_fixe` / `annuler_paiement_frais_fixe` ; la table documents accepte la police d'assurance (v0.8.6).
 
 ## 2. Lancer en local
 
@@ -51,7 +53,14 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `components/EnTete.tsx` | En-tête fixe : « Immeubles So-Max », cloche (tiroir de notifications), avatar → Profil |
 | `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (immeubles, ajout, vendus) |
 | `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente |
-| `app/frais-fixes/page.tsx` | Frais fixes (contenu en v0.8.6) |
+| `app/frais-fixes/page.tsx` | Frais fixes : une carte par immeuble (Hypothèque, Assurances, Taxes), sélecteur d'année, totaux |
+| `components/FeuillePret.tsx` | Ajouter, modifier, renouveler (nouveau terme) ou retirer un prêt |
+| `components/FeuilleReleve.tsx` | Intérêts selon le relevé annuel du prêteur (a priorité sur le calcul) |
+| `components/FeuilleAssurance.tsx` | Police d'assurance (terme, prime, PDF dans documents) ; renouvellement |
+| `components/FeuilleTaxes.tsx` | Compte de taxes foncières ou scolaires et ses versements |
+| `components/FeuillePaiement.tsx` | « Payé » : date + dépense correspondante dans Dépenses (RPC payer_frais_fixe) |
+| `lib/amortissement.ts` | Ventilation capital / intérêts : taux fixe composé semestriellement, versements mensuels |
+| `lib/fraisFixes.ts` | Types, intérêts de l'année (relevé prioritaire), statuts des versements, totaux par immeuble |
 | `app/loyers/page.tsx` | Loyers du mois par immeuble, retards (tous mois), feuille « Reçu » / partiel / annulation |
 | `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
 | `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
@@ -204,6 +213,31 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - « Marquer comme vendu » : date et prix de vente, `actif = false` ; l'immeuble disparaît des nouvelles
   saisies mais reste dans l'historique. « Annuler la vente » corrige une erreur.
 
+## Frais fixes (v0.8.6)
+
+- Onglet « Frais fixes » : sélecteur d'année (gardé dans l'adresse `?a=2026`), résumé des frais de l'année par immeuble,
+  puis une carte par immeuble : Hypothèque, Assurances, Taxes. Depuis Profil > immeuble, « Frais fixes » ouvre
+  la page sur cet immeuble seulement (`?i=<id>`).
+- **Prêts** : plusieurs par immeuble ; tous à taux fixe, versements mensuels. Champs : solde au début du terme, taux,
+  début et fin du terme, premier versement, amortissement restant (sert à vérifier le versement), versement du prêteur.
+  Un renouvellement crée un nouveau terme (« Renouveler le terme », proposé 180 jours avant la fin) ; l'ancien reste
+  pour les intérêts des années passées.
+- **Calcul** (`lib/amortissement.ts`, rien n'est stocké) : taux par versement i = (1 + taux/2)^(2/12) − 1 ;
+  intérêts = solde × i (au cent), capital = versement − intérêts. Les versements datés dans l'année comptent pour l'année.
+  Vérifié : 100 000 $ à 5 % sur 25 ans → 581,60 $ par mois.
+- **Relevé du prêteur** : intérêts de l'année selon le relevé ; il a priorité sur le calcul (avertissement si l'écart
+  dépasse 1 %). Total des intérêts = T776 ligne 8710 (et TP-128).
+- **Assurances** : une ligne par terme de police (assureur, police, prime annuelle, début, renouvellement, annuel ou
+  mensuel, PDF ou photo de la police dans `documents`, dossier `assurances/` du bucket). « Renouveler » préremplit la
+  police suivante (proposé 60 jours avant).
+- **Taxes** : « + Ajouter un compte de taxes » : foncières ou scolaires, total, nombre de versements et première échéance ;
+  les versements sont préparés (parts égales, aux 3 mois) puis ajustables. Statut calculé : à payer, en retard, payé.
+- **Payé** (taxes et assurances) : date du paiement et, coché par défaut, la dépense correspondante est inscrite dans
+  Dépenses (complète, catégorie « Taxes foncières et scolaires » 9180 ou « Assurances » 8690, fournisseur proposé :
+  Ville d'Alma, Taxe scolaire ou l'assureur). « Annuler » retire aussi cette dépense (suppression douce).
+  Les versements hypothécaires ne vont pas dans Dépenses : seuls les intérêts calculés comptent.
+- Total des frais fixes de l'année : intérêts retenus + primes des polices qui commencent dans l'année + taxes de l'année.
+
 ## Thème
 
 - Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
@@ -231,8 +265,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8.6 : page Frais fixes (prêts hypothécaires avec ventilation capital / intérêts, assurances, taxes).
-2. v0.8.7 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
-3. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
-4. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
-5. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.
+1. v0.8.7 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
+2. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
+4. v1.0 : rapport annuel par immeuble (revenus + dépenses + intérêts hypothécaires de Frais fixes), format T776 / TP-128.

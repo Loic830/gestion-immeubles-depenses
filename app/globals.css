@@ -420,3 +420,7 @@ details.carte summary { cursor: pointer; list-style-position: inside; }
 .ligne-actif .sous { font-size: 14px; color: var(--discret); }
 .pastille.vendu { background: var(--bordure); color: var(--discret); }
 .ligne-logement { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+
+/* Frais fixes (v0.8.6) : deux champs date côte à côte restent dans la feuille */
+.rangee > * { min-width: 0; }
+.entete > .pastille { white-space: nowrap; flex-shrink: 0; }

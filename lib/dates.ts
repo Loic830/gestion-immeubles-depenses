@@ -51,3 +51,11 @@ export function finDuMois(iso: string): string {
   const [a, m] = iso.split("-").map(Number);
   return versIso(new Date(a, m, 0));
 }
+
+/** Ajoute n mois en gardant le jour (ramené au dernier jour du mois au besoin) :
+ *  « 2026-01-31 » + 1 → « 2026-02-28 » */
+export function ajouterMois(iso: string, n: number): string {
+  const [a, m, j] = iso.split("-").map(Number);
+  const dernier = new Date(a, m - 1 + n + 1, 0).getDate();
+  return versIso(new Date(a, m - 1 + n, Math.min(j, dernier)));
+}

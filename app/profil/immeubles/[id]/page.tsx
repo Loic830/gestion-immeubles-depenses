@@ -232,6 +232,14 @@ export default function PageDetailImmeuble() {
         </div>
       </form>
 
+      <Link href={`/frais-fixes?i=${id}`} className="carte ligne-actif" style={{ display: "flex" }}>
+        <div className="infos">
+          <div className="titre">Frais fixes</div>
+          <div className="sous">Hypothèques, assurances et taxes de cet immeuble</div>
+        </div>
+        <span aria-hidden="true">›</span>
+      </Link>
+
       <h2 className="immeuble-titre">Logements ({actifs.length})</h2>
       <div className="carte">
         {actifs.map((l) => (
