@@ -192,7 +192,6 @@ function ListeDepenses() {
     <main className="page avec-onglets">
       <div className="entete">
         <h1>Dépenses</h1>
-        <button className="bouton" onClick={() => supabase.auth.signOut()}>Déconnexion</button>
       </div>
 
       {/* Filtres */}

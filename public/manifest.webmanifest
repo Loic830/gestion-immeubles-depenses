@@ -1,7 +1,7 @@
 {
-  "name": "Gestion des immeubles",
-  "short_name": "Immeubles",
-  "description": "Saisie des dépenses et numérisation des factures",
+  "name": "Immeubles So-Max",
+  "short_name": "So-Max",
+  "description": "Gestion des immeubles : loyers, baux, frais fixes, dépenses et véhicule",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f5f7",

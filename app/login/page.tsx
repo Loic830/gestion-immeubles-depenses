@@ -26,7 +26,7 @@ export default function PageConnexion() {
 
   return (
     <main className="page">
-      <div className="entete"><h1>Gestion des immeubles</h1></div>
+      <div className="entete"><h1>Immeubles So-Max</h1></div>
       <form className="carte" onSubmit={seConnecter}>
         {erreur && <div className="message erreur">{erreur}</div>}
         <label htmlFor="courriel">Courriel</label>

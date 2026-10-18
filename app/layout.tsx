@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import EnTete from "@/components/EnTete";
 
 export const metadata: Metadata = {
-  title: "Gestion des immeubles",
-  description: "Saisie des dépenses et numérisation des factures",
+  title: "Immeubles So-Max",
+  description: "Gestion des immeubles : loyers, baux, frais fixes, dépenses et véhicule",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "Immeubles", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "So-Max", statusBarStyle: "default" },
   icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
 };
 
@@ -19,7 +20,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr-CA">
-      <body>{children}</body>
+      <body>
+        <EnTete />
+        {children}
+      </body>
     </html>
   );
 }

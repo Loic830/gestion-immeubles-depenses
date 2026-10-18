@@ -361,3 +361,62 @@ button.logement-ligne { border-bottom: 1px solid var(--bordure); }
 .case { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-weight: 400; }
 .case input { width: 22px; height: 22px; margin: 0; flex: 0 0 auto; }
 details.carte summary { cursor: pointer; list-style-position: inside; }
+
+/* En-tête de l'application et tiroir de notifications (v0.8.5) */
+.entete-app {
+  position: sticky; top: 0; z-index: 30;
+  background: var(--accent); color: var(--sur-accent);
+  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+}
+.entete-app .contenu {
+  max-width: 640px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.entete-app .nom-app { font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entete-app .actions { display: flex; align-items: center; gap: 8px; }
+.bouton-icone {
+  position: relative;
+  width: 40px; height: 40px; border-radius: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: inherit; cursor: pointer;
+}
+.pastille-cloche {
+  position: absolute; top: 2px; right: 0;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--erreur); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.avatar {
+  width: 36px; height: 36px; border-radius: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--sur-accent); color: var(--accent);
+  font-size: 14px; font-weight: 700; text-decoration: none;
+}
+.avatar.actif { outline: 2px solid var(--sur-accent); outline-offset: 2px; }
+/* L'en-tête gère déjà l'encoche : la page n'a plus besoin de l'espace du haut */
+.entete-app ~ .page { padding-top: 16px; }
+
+.tiroir-fond { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.4); }
+.tiroir {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(380px, 88vw); overflow-y: auto;
+  background: var(--fond);
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Cinq onglets : texte plus compact pour tenir sur un iPhone */
+.barre-onglets { gap: 2px; padding-left: 6px; padding-right: 6px; }
+.barre-onglets a { font-size: 12px; white-space: nowrap; }
+
+/* Profil (v0.8.5) */
+.ligne-actif {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--bordure);
+  color: inherit; text-decoration: none;
+}
+.ligne-actif:last-child { border-bottom: none; }
+.ligne-actif .infos { flex: 1; min-width: 0; }
+.ligne-actif .titre { font-weight: 600; }
+.ligne-actif .sous { font-size: 14px; color: var(--discret); }
+.pastille.vendu { background: var(--bordure); color: var(--discret); }
+.ligne-logement { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 8px; }

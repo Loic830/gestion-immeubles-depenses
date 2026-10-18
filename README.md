@@ -1,7 +1,7 @@
-# Gestion des immeubles — Modules 1 (dépenses) et 2 (loyers)
+# Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.4 : Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -24,6 +24,7 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 9. `supabase/009_credits_mensuels.sql` — extras négatifs = crédits récurrents (ex. tonte de pelouse −50 $/mois).
 8. `supabase/008_lieux_distances.sql` — lieux (Maison + immeubles, puis Rona, BMR…) et distances
    entre deux lieux, pour composer des trajets.
+10. `supabase/010_profil_actifs.sql` — valeur d'achat et vente d'un immeuble (v0.8.5).
 
 ## 2. Lancer en local
 
@@ -46,7 +47,11 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 
 | Fichier | Rôle |
 | --- | --- |
-| `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Dépenses · Baux |
+| `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Baux · Frais fixes · Dépenses · Véhicule |
+| `components/EnTete.tsx` | En-tête fixe : « Immeubles So-Max », cloche (tiroir de notifications), avatar → Profil |
+| `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (immeubles, ajout, vendus) |
+| `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente |
+| `app/frais-fixes/page.tsx` | Frais fixes (contenu en v0.8.6) |
 | `app/loyers/page.tsx` | Loyers du mois par immeuble, retards (tous mois), feuille « Reçu » / partiel / annulation |
 | `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
 | `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
@@ -166,7 +171,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Véhicule (v0.8)
 
-- Onglet « Véhicule » (4e onglet). Premier usage : nommer le véhicule, puis inscrire le compteur.
+- Onglet « Véhicule » (5e onglet). Premier usage : nommer le véhicule, puis inscrire le compteur.
 - Trajet : immeuble (ou « Plusieurs »), km aller-retour, date, motif obligatoire (puces ou texte),
   destination ; « Garder comme trajet fréquent » crée un raccourci en un toucher.
 - « Composer un trajet » : toucher les lieux dans l'ordre (Maison → Gauthier → Rona → Gauthier → Maison) ;
@@ -182,6 +187,22 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - Dossier comptable (onglet Dépenses) sur une année complète (« Cette année », « Année dernière » ou 1er janv.–31 déc.,
   sans filtre de catégorie) : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776 ligne 9281) dans
   depenses.xlsx, comprise dans les totaux et « Par catégorie », + onglets « Véhicule - … » et dossier recus_vehicule/.
+
+## En-tête, navigation et Profil (v0.8.5)
+
+- En-tête vert fixe sur toutes les pages sauf la connexion : « Immeubles So-Max » à gauche,
+  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.7).
+- Onglets du bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
+- La déconnexion est dans le Profil (retirée de la page Dépenses).
+- Profil > Mon compte : nom et cellulaire gardés dans le compte Supabase (`user_metadata`) ;
+  un changement de courriel demande la confirmation par lien ; changement du mot de passe.
+- Profil > Actifs : immeubles actifs (puis vendus, sur demande) ; « + Ajouter » crée l'immeuble et ses
+  logements numérotés 1..n. Penser à ajouter aussi le lieu dans Véhicule pour les trajets.
+- Détail d'un immeuble : nom, adresse, date et valeur d'achat ; numéros de logement modifiables
+  (les baux, loyers et dépenses suivent, car ils pointent vers l'identifiant) ; ajout et désactivation
+  de logements (refusée s'il y a un bail en cours ou à venir) ; `nb_logements` est tenu à jour.
+- « Marquer comme vendu » : date et prix de vente, `actif = false` ; l'immeuble disparaît des nouvelles
+  saisies mais reste dans l'historique. « Annuler la vente » corrige une erreur.
 
 ## Thème
 
@@ -210,6 +231,8 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
-2. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
-3. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.
+1. v0.8.6 : page Frais fixes (prêts hypothécaires avec ventilation capital / intérêts, assurances, taxes).
+2. v0.8.7 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
+3. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+4. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
+5. v1.0 : rapport annuel par immeuble (revenus + dépenses), format T776 / TP-128.

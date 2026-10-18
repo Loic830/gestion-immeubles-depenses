@@ -6,8 +6,9 @@ import { usePathname } from "next/navigation";
 // Barre d'onglets du bas.
 const ONGLETS = [
   { href: "/loyers", libelle: "Loyers", icone: "💵", actif: (p: string) => p.startsWith("/loyers") },
-  { href: "/", libelle: "Dépenses", icone: "🧾", actif: (p: string) => p === "/" || p.startsWith("/depense") },
   { href: "/baux", libelle: "Baux", icone: "🔑", actif: (p: string) => p.startsWith("/baux") },
+  { href: "/frais-fixes", libelle: "Frais fixes", icone: "🏦", actif: (p: string) => p.startsWith("/frais-fixes") },
+  { href: "/", libelle: "Dépenses", icone: "🧾", actif: (p: string) => p === "/" || p.startsWith("/depense") || p.startsWith("/nouvelle") },
   { href: "/vehicule", libelle: "Véhicule", icone: "🚗", actif: (p: string) => p.startsWith("/vehicule") },
 ];
 
