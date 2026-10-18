@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
-import { PERIODES, bornesPeriode, type CodePeriode } from "@/lib/periodes";
+import { ajouterMois, aujourdhuiIso, finDuMois, moisLisible } from "@/lib/dates";
 import { genererCsv, montantCsv, telechargerFichier } from "@/lib/csv";
 import { exporterDossier } from "@/lib/exportDossier";
 import BarreOnglets from "@/components/BarreOnglets";
@@ -37,8 +37,6 @@ type Ligne = {
   nb_pieces: number;
 };
 
-type Immeuble = { id: string; nom: string };
-type Categorie = { id: string; nom: string; parent_id: string | null; ordre: number };
 
 const LIMITE = 1000; // plafond par défaut de Supabase par requête
 
@@ -56,77 +54,60 @@ function ListeDepenses() {
   const params = useSearchParams();
   const { session, pret } = useSession();
 
-  // Filtres, lus dans l'URL (un lien garde ses filtres)
-  const periode = (params.get("p") as CodePeriode) || "annee";
-  const du = params.get("du") ?? "";
-  const au = params.get("au") ?? "";
-  const immeublesChoisis = useMemo(() => (params.get("im") ?? "").split(",").filter(Boolean), [params]);
-  const categorieChoisie = params.get("cat") ?? "";
-  const statutChoisi = params.get("st") ?? "";
+  // Période, lue dans l'URL : ?m=2026-10 (mois, par défaut le mois courant) ou ?a=2026 (année)
+  const moisActuel = aujourdhuiIso().slice(0, 7);
+  const anneeParam = params.get("a") ?? "";
+  const moisParam = params.get("m") ?? "";
+  const mode: "mois" | "annee" = /^\d{4}$/.test(anneeParam) ? "annee" : "mois";
+  const annee = mode === "annee" ? Number(anneeParam) : Number(moisActuel.slice(0, 4));
+  const mois = /^\d{4}-\d{2}$/.test(moisParam) ? moisParam : moisActuel;
+  const { debut, fin } = mode === "annee"
+    ? { debut: `${annee}-01-01`, fin: `${annee}-12-31` }
+    : { debut: `${mois}-01`, fin: finDuMois(`${mois}-01`) };
+  const estPeriodeCourante = mode === "annee" ? annee === Number(moisActuel.slice(0, 4)) : mois === moisActuel;
+  const libellePeriode = mode === "annee" ? `Année ${annee}` : moisLisible(`${mois}-01`);
 
-  const [immeubles, setImmeubles] = useState<Immeuble[]>([]);
-  const [categories, setCategories] = useState<Categorie[]>([]);
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [filtresOuverts, setFiltresOuverts] = useState(false);
   const [exportEnCours, setExportEnCours] = useState<string | null>(null);
   const [exportResultat, setExportResultat] = useState<string | null>(null);
 
-  function changerFiltre(modifs: Record<string, string>) {
-    const p = new URLSearchParams(params.toString());
-    for (const [k, v] of Object.entries(modifs)) {
-      if (v) p.set(k, v); else p.delete(k);
-    }
-    router.replace(`/?${p.toString()}`, { scroll: false });
+  function allerA(requete: string) {
+    setExportResultat(null);
+    router.replace(requete ? `/?${requete}` : "/", { scroll: false });
+  }
+  // Le mois courant et l'année courante sont les défauts : l'adresse reste « / »
+  const allerMois = (m: string) => allerA(m === moisActuel ? "" : `m=${m}`);
+  const allerAnnee = (a: number) => allerA(`a=${a}`);
+  function decaler(n: number) {
+    if (mode === "annee") allerAnnee(annee + n);
+    else allerMois(ajouterMois(`${mois}-01`, n).slice(0, 7));
+  }
+  function choisirMode(m: "mois" | "annee") {
+    if (m === mode) return;
+    if (m === "annee") allerAnnee(Number(mois.slice(0, 4)));
+    // Retour au mois : le mois courant si c'est l'année courante, sinon janvier de l'année affichée
+    else allerMois(annee === Number(moisActuel.slice(0, 4)) ? moisActuel : `${annee}-01`);
   }
 
-  function basculerImmeuble(id: string) {
-    const actuels = new Set(immeublesChoisis);
-    if (actuels.has(id)) actuels.delete(id); else actuels.add(id);
-    changerFiltre({ im: Array.from(actuels).join(",") });
-  }
-
-  // Listes de référence pour les filtres
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
-      const [im, ca] = await Promise.all([
-        supabase.from("immeubles").select("id, nom").is("deleted_at", null).order("nom"),
-        supabase.from("categories").select("id, nom, parent_id, ordre").is("deleted_at", null).order("ordre"),
-      ]);
-      setImmeubles((im.data ?? []) as Immeuble[]);
-      setCategories((ca.data ?? []) as Categorie[]);
-    })();
-  }, [session]);
-
-  // Données filtrées
   useEffect(() => {
     if (!session) return;
     (async () => {
       setChargement(true);
       setErreur(null);
-      const { debut, fin } = bornesPeriode(periode, du, au);
-      let q = supabase
+      const { data, error } = await supabase
         .from("v_depenses_detail")
         .select("*")
+        .gte("date_facture", debut)
+        .lte("date_facture", fin)
         .order("date_facture", { ascending: false })
         .limit(LIMITE);
-      if (debut) q = q.gte("date_facture", debut);
-      if (fin) q = q.lte("date_facture", fin);
-      if (immeublesChoisis.length) q = q.in("immeuble_id", immeublesChoisis);
-      if (categorieChoisie) {
-        // Une catégorie principale inclut ses sous-catégories
-        const ids = [categorieChoisie, ...categories.filter((c) => c.parent_id === categorieChoisie).map((c) => c.id)];
-        q = q.in("categorie_id", ids);
-      }
-      if (statutChoisi) q = q.eq("statut", statutChoisi);
-      const { data, error } = await q;
       if (error) setErreur(error.message);
       else setLignes((data ?? []) as Ligne[]);
       setChargement(false);
     })();
-  }, [session, periode, du, au, immeublesChoisis, categorieChoisie, statutChoisi, categories]);
+  }, [session, debut, fin]);
 
   // Totaux
   const total = lignes.reduce((s, l) => s + (l.montant_cents ?? 0), 0);
@@ -141,9 +122,6 @@ function ListeDepenses() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [lignes]);
 
-  const libellePeriode = PERIODES.find((p) => p.code === periode)?.libelle ?? "";
-  const nbFiltres = (immeublesChoisis.length ? 1 : 0) + (categorieChoisie ? 1 : 0) + (statutChoisi ? 1 : 0);
-
   function exporter() {
     const entetes = [
       "Date", "Fournisseur", "Immeuble", "Logement", "Catégorie", "Catégorie principale", "Ligne T776",
@@ -156,22 +134,18 @@ function ListeDepenses() {
       montantCsv(l.tps_cents), montantCsv(l.tvq_cents), montantCsv(l.total_cents), l.mode_paiement,
       l.no_facture, l.statut, l.description, l.notes, l.nb_pieces,
     ]);
-    const { debut, fin } = bornesPeriode(periode, du, au);
-    const nom = `depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.csv`;
+    const nom = `depenses_${debut}_${fin}.csv`;
     telechargerFichier(genererCsv(entetes, rangs), nom);
   }
 
   async function exporterAvecRecus() {
     setExportResultat(null);
     setErreur(null);
-    const { debut, fin } = bornesPeriode(periode, du, au);
     try {
-      // Année complète (sans filtre de catégorie ni brouillons seulement) : frais de véhicule inclus
-      const anneeComplete = debut && fin && debut.endsWith("-01-01") && fin === `${debut.slice(0, 4)}-12-31`
-        && !categorieChoisie && statutChoisi !== "brouillon";
+      // Année complète : frais de véhicule inclus
       const r = await exporterDossier(
-        lignes, `dossier_depenses_${debut ?? "debut"}_${fin ?? "aujourdhui"}.zip`, setExportEnCours,
-        anneeComplete ? { annee: Number(debut!.slice(0, 4)), immeubleIds: immeublesChoisis } : null,
+        lignes, `dossier_depenses_${debut}_${fin}.zip`, setExportEnCours,
+        mode === "annee" ? { annee, immeubleIds: [] } : null,
       );
       const vehicule = r.vehiculeCents ? ` Frais de véhicule inclus : ${formatCents(r.vehiculeCents)}.` : "";
       setExportResultat(
@@ -194,73 +168,12 @@ function ListeDepenses() {
         <h1>Dépenses</h1>
       </div>
 
-      {/* Filtres */}
-      <section className="carte">
-        <select value={periode} onChange={(e) => changerFiltre({ p: e.target.value, du: "", au: "" })} aria-label="Période">
-          {PERIODES.map((p) => <option key={p.code} value={p.code}>{p.libelle}</option>)}
-        </select>
-        {periode === "perso" && (
-          <div className="rangee" style={{ marginTop: 8 }}>
-            <input type="date" value={du} onChange={(e) => changerFiltre({ du: e.target.value })} aria-label="Du" />
-            <input type="date" value={au} onChange={(e) => changerFiltre({ au: e.target.value })} aria-label="Au" />
-          </div>
-        )}
-
-        <button className="lien-filtres" onClick={() => setFiltresOuverts(!filtresOuverts)}>
-          {filtresOuverts ? "▾" : "▸"} Filtres{nbFiltres ? ` (${nbFiltres})` : ""}
-        </button>
-
-        {filtresOuverts && (
-          <>
-            <label>Immeubles</label>
-            <div className="choix">
-              {immeubles.map((im) => (
-                <button key={im.id} type="button" className={immeublesChoisis.includes(im.id) ? "actif" : ""}
-                        onClick={() => basculerImmeuble(im.id)}>
-                  {im.nom}
-                </button>
-              ))}
-            </div>
-
-            <label htmlFor="f-cat">Catégorie</label>
-            <select id="f-cat" value={categorieChoisie} onChange={(e) => changerFiltre({ cat: e.target.value })}>
-              <option value="">Toutes</option>
-              {categories.filter((c) => !c.parent_id).map((p) => {
-                const enfants = categories.filter((c) => c.parent_id === p.id);
-                return enfants.length === 0 ? (
-                  <option key={p.id} value={p.id}>{p.nom}</option>
-                ) : (
-                  <optgroup key={p.id} label={p.nom}>
-                    <option value={p.id}>{p.nom} (tout)</option>
-                    {enfants.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
-                  </optgroup>
-                );
-              })}
-            </select>
-
-            <label htmlFor="f-st">Statut</label>
-            <select id="f-st" value={statutChoisi} onChange={(e) => changerFiltre({ st: e.target.value })}>
-              <option value="">Tous</option>
-              <option value="complete">Complètes</option>
-              <option value="brouillon">Brouillons à compléter</option>
-            </select>
-
-            {nbFiltres > 0 && (
-              <button className="bouton plein" style={{ marginTop: 12 }}
-                      onClick={() => changerFiltre({ im: "", cat: "", st: "" })}>
-                Effacer les filtres
-              </button>
-            )}
-          </>
-        )}
-      </section>
-
       {erreur && <div className="message erreur">{erreur}</div>}
 
       {/* Totaux */}
       <section className="carte">
         <div className="total-periode">
-          {libellePeriode} : <strong>{formatCents(total)}</strong>
+          <span style={{ textTransform: "capitalize" }}>{libellePeriode}</span> : <strong>{formatCents(total)}</strong>
           {nbBrouillons > 0 && <> · <span className="pastille">{nbBrouillons} à compléter</span></>}
         </div>
         {totalCapital > 0 && (
@@ -292,7 +205,30 @@ function ListeDepenses() {
         )}
         {exportResultat && <p className="aide" style={{ color: "var(--succes)" }}>{exportResultat}</p>}
         {lignes.length >= LIMITE && (
-          <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : resserre la période.</p>
+          <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : passe en mode Mois.</p>
+        )}
+      </section>
+
+      {/* Période */}
+      <section className="carte">
+        <div className="choix-2">
+          <button type="button" className={mode === "mois" ? "actif" : ""} aria-pressed={mode === "mois"}
+                  onClick={() => choisirMode("mois")}>Mois</button>
+          <button type="button" className={mode === "annee" ? "actif" : ""} aria-pressed={mode === "annee"}
+                  onClick={() => choisirMode("annee")}>Année</button>
+        </div>
+        <div className="selecteur-mois" style={{ marginTop: 12 }}>
+          <button className="bouton" onClick={() => decaler(-1)}
+                  aria-label={mode === "annee" ? "Année précédente" : "Mois précédent"}>‹</button>
+          <strong style={{ textTransform: "capitalize" }}>{mode === "annee" ? annee : moisLisible(`${mois}-01`)}</strong>
+          <button className="bouton" onClick={() => decaler(1)}
+                  aria-label={mode === "annee" ? "Année suivante" : "Mois suivant"}>›</button>
+        </div>
+        {!estPeriodeCourante && (
+          <button className="lien-filtres" style={{ margin: "8px auto 0" }}
+                  onClick={() => (mode === "annee" ? allerAnnee(Number(moisActuel.slice(0, 4))) : allerMois(moisActuel))}>
+            {mode === "annee" ? "Revenir à l'année courante" : "Revenir au mois courant"}
+          </button>
         )}
       </section>
 
@@ -300,7 +236,7 @@ function ListeDepenses() {
       <div className="carte">
         {chargement && <p className="aide">Chargement…</p>}
         {!chargement && lignes.length === 0 && (
-          <p className="aide">Aucune dépense pour cette sélection. Touche « + » pour photographier un reçu.</p>
+          <p className="aide">Aucune dépense pour cette période. Touche « + » pour photographier un reçu.</p>
         )}
         {!chargement && lignes.map((l) => (
           <Link href={`/depense/${l.depense_id}`} className="liste-depense" key={l.ligne_id}>

@@ -35,7 +35,7 @@ export default function EnTete() {
 
   if (chemin.startsWith("/login")) return null;
 
-  // Les alertes arrivent avec la version 0.8.7 ; la pastille reste cachée à 0.
+  // Les alertes arrivent avec la version 0.8.9 ; la pastille reste cachée à 0.
   const nonLues = 0;
 
   return (

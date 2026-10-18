@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -78,8 +78,8 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `lib/exportVehicule.ts` | Dossier véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais avec liens) + recus/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
-| `app/page.tsx` | Liste filtrée (filtres gardés dans l'URL), totaux par catégorie, export CSV, bouton « + » |
-| `lib/periodes.ts` | Calcul des périodes (mois, trimestre, année, dates précises) |
+| `app/page.tsx` | Récapitulatif, navigation Mois / Année (gardée dans l'URL), liste, exports, bouton « + » |
+| `lib/periodes.ts` | Ancien calcul des périodes (plus utilisé depuis v0.8.8) |
 | `lib/exportDossier.ts` | Dossier comptable ZIP : depenses.xlsx (liens vers les reçus, onglet par catégorie) + dossier recus/ |
 | `lib/csv.ts` | Export CSV pour Excel en français (séparateur « ; », virgule décimale, UTF-8 avec BOM) |
 | `app/nouvelle/page.tsx` | Nouvelle dépense (utilise le formulaire partagé) |
@@ -115,14 +115,18 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 - « Supprimer » est une suppression douce (`deleted_at`) : la dépense disparaît des listes
   et des totaux, mais les données et les reçus restent en base.
 
-## Liste, filtres et export (v0.3)
+## Liste et export (v0.3, navigation revue en v0.8.8)
 
-- Période par défaut : cette année. Autres choix : ce mois-ci, mois dernier, trimestre,
-  année dernière, tout, dates précises.
-- Filtres : un ou plusieurs immeubles, une catégorie (une catégorie principale inclut
-  ses sous-catégories), statut (complètes / brouillons).
-- Les filtres sont gardés dans l'adresse : un lien ou un signet conserve la sélection.
-- Totaux : total de la sélection, part en capital, répartition par catégorie principale.
+- En haut : récapitulatif de la période (total, nombre de brouillons à compléter, part en capital,
+  répartition par catégorie principale) et les boutons d'export.
+- Plus bas : boutons « Mois » et « Année », puis flèches ‹ › comme dans l'onglet Loyers.
+  Par défaut : le mois courant. En mode Année : l'année civile entière (1er janv. au 31 déc.), année courante par défaut.
+  « Revenir au mois courant » / « Revenir à l'année courante » quand on s'en éloigne.
+- Passer de Mois à Année garde l'année du mois affiché ; revenir à Mois ouvre le mois courant
+  (si c'est l'année courante), sinon janvier de l'année affichée.
+- La période est gardée dans l'adresse : `/?m=2026-09` (un mois) ou `/?a=2025` (une année) ; `/` = mois courant.
+- Les anciens filtres (immeubles, catégorie, statut, dates précises) sont retirés en v0.8.8 ;
+  `lib/periodes.ts` n'est plus utilisé.
 - « Exporter en CSV » : une ligne par ligne de dépense, avec la ligne T776, prête pour Excel.
 - Plafond : 1000 lignes par affichage (limite Supabase par défaut) ; un avis s'affiche si atteint.
 
@@ -199,14 +203,13 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - % = km du journal / km du compteur ; part déductible = frais × % ; répartie par immeuble selon ses km,
   les trajets « Plusieurs » selon le nombre de logements.
 - Export par année : vehicule_AAAA.xlsx (Résumé, Journal de bord, Frais) + reçus. La DPA est laissée au comptable.
-- Dossier comptable (onglet Dépenses) sur une année complète (« Cette année », « Année dernière » ou 1er janv.–31 déc.,
-  sans filtre de catégorie) : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776 ligne 9281) dans
+- Dossier comptable (onglet Dépenses) en mode Année : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776 ligne 9281) dans
   depenses.xlsx, comprise dans les totaux et « Par catégorie », + onglets « Véhicule - … » et dossier recus_vehicule/.
 
 ## En-tête, navigation et Profil (v0.8.5)
 
 - En-tête vert fixe sur toutes les pages sauf la connexion : « Immeubles So-Max » à gauche,
-  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.8).
+  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.9).
 - Onglets du bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
 - La déconnexion est dans le Profil (retirée de la page Dépenses).
 - Profil > Mon compte : nom et cellulaire gardés dans le compte Supabase (`user_metadata`) ;
@@ -292,7 +295,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8.8 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
+1. v0.8.9 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
 2. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
 3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
 4. v1.0 : rapport annuel par immeuble (revenus + dépenses + intérêts hypothécaires de Frais fixes), format T776 / TP-128.

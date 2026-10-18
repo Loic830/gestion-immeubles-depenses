@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.7**.
+> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.8**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -25,7 +25,7 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 **Ce que l'app fait aujourd'hui** : en-tête « Immeubles So-Max » (cloche, avatar → Profil et Actifs) et
 5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
 1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois).
-2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, filtres, export CSV, dossier comptable (Excel + reçus en ZIP, frais de véhicule inclus sur une année complète).
+2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8, filtres retirés), export CSV, dossier comptable (Excel + reçus en ZIP, frais de véhicule inclus sur une année complète).
 3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7).
 4. **Véhicule** 🚗 : journal de bord (km), trajets fréquents composés de lieux, frais du véhicule, relevés du compteur, prorata déductible par immeuble, export.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
@@ -69,22 +69,23 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 Fichiers dans `supabase/`, à exécuter **une seule fois chacun, dans l'ordre**, dans Supabase > SQL Editor.
 Un message « already exists » signifie que le fichier a déjà été exécuté.
 
-| #   | Fichier                            | Contenu                                                                                                                                                                                         | État            |
-| --- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| 001 | `001_module1_schema.sql`           | immeubles, logements, catégories (codes T776), fournisseurs, modes de paiement, dépenses, lignes, pièces jointes, bucket, RLS                                                                   | exécuté         |
-| 002 | `002_enregistrer_depense.sql`      | RPC `enregistrer_depense`                                                                                                                                                                       | exécuté         |
-| 003 | `003_modifier_depense.sql`         | RPC `modifier_depense`                                                                                                                                                                          | exécuté         |
-| 004 | `004_module2_loyers.sql`           | locataires, baux, extras, échéances, paiements, renouvellements, documents ; `creer_bail`, `generer_echeances`, `prolonger_echeances`, `fenetre_avis`, `occupation` ; vues `v_soldes`, `v_baux` | exécuté         |
-| 005 | `005_changement_loyer_credits.sql` | `changements_loyer`, RPC `changer_loyer` ; mode de paiement `credit`                                                                                                                            | exécuté         |
-| 006 | `006_fin_de_bail.sql`              | `fins_bail`, RPC `terminer_bail`, `annuler_fin_bail`                                                                                                                                            | exécuté         |
-| 007 | `007_vehicule.sql`                 | véhicules, relevés du compteur, trajets favoris, déplacements, frais du véhicule                                                                                                                | exécuté |
-| 008 | `008_lieux_distances.sql`          | lieux, distances entre lieux, `trajets_favoris.etapes`                                                                                                                                          | exécuté |
-| 009 | `009_credits_mensuels.sql`         | extras négatifs (crédits mensuels), `annuler_fin_bail` corrigée                                                                                                                                 | exécuté |
-| 010 | `010_profil_actifs.sql`            | `immeubles` : valeur d'achat, date et prix de vente (v0.8.5)                                                                                                                                    | exécuté |
-| 011 | `011_frais_fixes.sql`              | `hypotheques`, `hypotheque_releves`, `assurances`, `taxes_versements` ; `documents.bail_id` facultatif + type `assurance` ; RPC `payer_frais_fixe`, `annuler_paiement_frais_fixe` (v0.8.6)      | exécuté|
-| 012 | `012_modifier_bail.sql`            | `documents.deleted_at` ; RPC `modifier_bail`, `creer_bail_en_remplacement` (v0.8.7)                                                                                                             | exécuté  |
+| # | Fichier | Contenu | État |
+| --- | --- | --- | --- |
+| 001 | `001_module1_schema.sql` | immeubles, logements, catégories (codes T776), fournisseurs, modes de paiement, dépenses, lignes, pièces jointes, bucket, RLS | exécuté |
+| 002 | `002_enregistrer_depense.sql` | RPC `enregistrer_depense` | exécuté |
+| 003 | `003_modifier_depense.sql` | RPC `modifier_depense` | exécuté |
+| 004 | `004_module2_loyers.sql` | locataires, baux, extras, échéances, paiements, renouvellements, documents ; `creer_bail`, `generer_echeances`, `prolonger_echeances`, `fenetre_avis`, `occupation` ; vues `v_soldes`, `v_baux` | exécuté |
+| 005 | `005_changement_loyer_credits.sql` | `changements_loyer`, RPC `changer_loyer` ; mode de paiement `credit` | exécuté |
+| 006 | `006_fin_de_bail.sql` | `fins_bail`, RPC `terminer_bail`, `annuler_fin_bail` | exécuté |
+| 007 | `007_vehicule.sql` | véhicules, relevés du compteur, trajets favoris, déplacements, frais du véhicule | **à confirmer** |
+| 008 | `008_lieux_distances.sql` | lieux, distances entre lieux, `trajets_favoris.etapes` | **à confirmer** |
+| 009 | `009_credits_mensuels.sql` | extras négatifs (crédits mensuels), `annuler_fin_bail` corrigée | **à confirmer** |
+| 010 | `010_profil_actifs.sql` | `immeubles` : valeur d'achat, date et prix de vente (v0.8.5) | **à confirmer** |
+| 011 | `011_frais_fixes.sql` | `hypotheques`, `hypotheque_releves`, `assurances`, `taxes_versements` ; `documents.bail_id` facultatif + type `assurance` ; RPC `payer_frais_fixe`, `annuler_paiement_frais_fixe` (v0.8.6) | **à confirmer** |
+| 012 | `012_modifier_bail.sql` | `documents.deleted_at` ; RPC `modifier_bail`, `creer_bail_en_remplacement` (v0.8.7) | **à exécuter** |
 
 > Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `013_notifications.sql`.
+> Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
 - `depenses` (en-tête, `statut` brouillon/complete) → `depense_lignes` (une par immeuble/catégorie ; somme des lignes = total, vérifiée par trigger différé) → `pieces_jointes`.
@@ -107,7 +108,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 | Chemin | Écran | `export default function` |
 | --- | --- | --- |
-| `app/page.tsx` | onglet **Dépenses** (liste, filtres, exports) | `Accueil` |
+| `app/page.tsx` | onglet **Dépenses** (récapitulatif, Mois / Année, liste, exports) | `Accueil` |
 | `app/nouvelle/page.tsx` | nouvelle dépense | `NouvelleDepense` |
 | `app/depense/[id]/page.tsx` | détail d'une dépense | `DetailDepense` |
 | `app/depense/[id]/modifier/page.tsx` | modifier / compléter | `ModifierDepense` |
@@ -128,7 +129,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | Fichier | Rôle |
 | --- | --- |
 | `components/BarreOnglets.tsx` | barre d'onglets du bas (Loyers · Baux · Frais fixes · Dépenses · Véhicule) |
-| `components/EnTete.tsx` | en-tête fixe : nom de l'app, cloche (tiroir de notifications, vide jusqu'à 0.8.8), avatar → Profil |
+| `components/EnTete.tsx` | en-tête fixe : nom de l'app, cloche (tiroir de notifications, vide jusqu'à 0.8.9), avatar → Profil |
 | `components/FeuillePret.tsx`, `FeuilleReleve.tsx`, `FeuilleAssurance.tsx`, `FeuilleTaxes.tsx`, `FeuillePaiement.tsx` | feuilles (formulaires du bas) de la page Frais fixes |
 | `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels |
 | `lib/fraisFixes.ts` | types Frais fixes, intérêts de l'année (relevé prioritaire), statut des versements, totaux |
@@ -180,7 +181,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **Livraison des mises à jour**
 - Claude ne peut pas toujours installer les paquets npm ni compiler l'app : **Loïc compile et déploie**.
-  (Les v0.8.6 et v0.8.7 ont été compilées avec succès par Claude, `npm run build`, avant la livraison.)
+  (Les v0.8.6, v0.8.7 et v0.8.8 ont été compilées avec succès par Claude, `npm run build`, avant la livraison.)
   Claude vérifie la syntaxe TypeScript, teste le SQL sur une copie locale et les calculs avec Node.
 - Chaque mise à jour est livrée en **ZIP avec les fichiers déjà rangés dans leurs dossiers** et un
   `LISEZMOI_MISE_A_JOUR.txt` : quels fichiers, quel SQL, dans quel ordre. Loïc décompresse **à la racine du projet**
@@ -218,7 +219,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 - (Fait en 0.8.7 : modification des coordonnées des locataires, via « Modifier le bail ».)
 
 **Feuille de route**
-0. **v0.8.8** : centre de notifications (tiroir de la cloche) : fin de terme hypothécaire (120, 60, 30 jours), assurances (30, 7 jours),
+0. **v0.8.9** : centre de notifications (tiroir de la cloche) : fin de terme hypothécaire (120, 60, 30 jours), assurances (30, 7 jours),
    taxes (14, 3 jours), avis TAL ; table `notifications` + calcul quotidien `pg_cron` (migration 013). Les dates sont déjà dans
    `hypotheques.fin_terme`, `assurances.date_renouvellement`, `taxes_versements.echeance` (non payés).
 1. **v0.8.x** : série de chèques postdatés en un geste, confirmation des prélèvements, chèques sans provision, reçu pour paiement comptant.
