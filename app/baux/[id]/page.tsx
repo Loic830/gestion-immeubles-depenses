@@ -80,6 +80,7 @@ export default function DetailBail() {
       .select("id, storage_key, mime_type, date_document, created_at")
       .eq("bail_id", id)
       .eq("type", "bail")
+      .is("deleted_at", null)
       .order("created_at");
     const liste = (data ?? []) as Omit<DocumentBail, "url">[];
     const urls = liste.length
@@ -115,6 +116,14 @@ export default function DetailBail() {
       if (champPhoto.current) champPhoto.current.value = "";
       if (champFichier.current) champFichier.current.value = "";
     }
+  }
+
+  async function retirerDocument(d: DocumentBail, numero: number) {
+    if (!window.confirm(`Retirer la page ${numero} du bail ? (ajoutée par erreur)`)) return;
+    setErreur(null);
+    const { error } = await supabase.from("documents").update({ deleted_at: new Date().toISOString() }).eq("id", d.id);
+    if (error) return setErreur(error.message);
+    await chargerDocuments();
   }
 
   const charger = useCallback(async () => {
@@ -277,7 +286,13 @@ export default function DetailBail() {
                 Loyer de {formatCents(prochainChangement.nouveau_loyer_cents)} à partir de {moisLisible(prochainChangement.date_effet)}
               </div>
             )}
-            <span className={`pastille ${bail.statut === "actif" ? "ok" : ""}`}>{LIBELLE_STATUT[bail.statut]}</span>
+            <span className={`pastille ${bail.statut === "actif" ? "ok" : bail.statut === "termine" ? "gris" : ""}`}>{LIBELLE_STATUT[bail.statut]}</span>
+            <div className="rangee" style={{ marginTop: 12 }}>
+              <Link className="bouton" style={{ textAlign: "center" }} href={`/baux/${bail.id}/modifier`}>Modifier le bail</Link>
+              <Link className="bouton" style={{ textAlign: "center" }} href={`/baux/logement/${bail.logement_id}`}>
+                Historique ({autresBaux.length + 1})
+              </Link>
+            </div>
           </section>
 
           {enRetard.length > 0 && (
@@ -437,13 +452,16 @@ export default function DetailBail() {
             {documents.length > 0 && (
               <div className="photos">
                 {documents.map((d, i) => (
-                  <button key={d.id} className="vignette" onClick={() => d.url && window.open(d.url, "_blank")}>
+                  <div key={d.id} className="vignette" role="button" tabIndex={0} style={{ cursor: "pointer" }}
+                       onClick={() => d.url && window.open(d.url, "_blank")}>
                     {d.mime_type === "application/pdf" || !d.url ? "PDF" : <img src={d.url} alt={`Bail, page ${i + 1}`} />}
-                  </button>
+                    <button type="button" aria-label={`Retirer la page ${i + 1}`}
+                            onClick={(e) => { e.stopPropagation(); retirerDocument(d, i + 1); }}>×</button>
+                  </div>
                 ))}
               </div>
             )}
-            {documents.length > 0 && <p className="aide">{documents.length} page{documents.length > 1 ? "s" : ""} · toucher pour ouvrir.</p>}
+            {documents.length > 0 && <p className="aide">{documents.length} page{documents.length > 1 ? "s" : ""} · toucher pour ouvrir, × pour retirer une page ajoutée par erreur.</p>}
           </section>
 
           {bail.avis_du && !bail.date_depart && (
@@ -487,23 +505,6 @@ export default function DetailBail() {
             ))}
             <p className="aide">Pour enregistrer un paiement ou un crédit : onglet <Link href="/loyers">Loyers</Link>.</p>
           </section>
-
-          {autresBaux.length > 0 && (
-            <section className="carte">
-              <strong>Autres baux de ce logement</strong>
-              {autresBaux.map((a) => (
-                <Link key={a.id} href={`/baux/${a.id}`} className="liste-depense">
-                  <div className="infos">
-                    <div className="titre">{a.locataires ?? "Locataire"}</div>
-                    <div className="sous">
-                      {dateLisible(a.date_debut)} → {a.date_depart ? `départ ${dateLisible(a.date_depart)}` : a.date_fin ? dateLisible(a.date_fin) : "indéterminée"}
-                    </div>
-                  </div>
-                  <span className={`pastille ${a.statut === "actif" ? "ok" : a.statut === "termine" ? "gris" : ""}`}>{LIBELLE_STATUT[a.statut]}</span>
-                </Link>
-              ))}
-            </section>
-          )}
 
           <button className="bouton plein lien-danger" onClick={supprimer} disabled={suppression}>
             {suppression ? "Suppression…" : "Supprimer ce bail (erreur de saisie)"}

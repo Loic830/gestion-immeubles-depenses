@@ -1,19 +1,22 @@
-// « Dossier prêteur » d'un immeuble : un ZIP contenant
-//   etat_des_loyers.xlsx → un logement par ligne (occupé ou vacant), locataires, dates,
-//                          loyer, extras, total mensuel et annuel, lien vers la copie du bail
-//   baux/                → chaque page de bail : Gauthier_6_Tremblay_p1.jpg
+// « Dossier prêteur » d'un immeuble pour les années choisies dans l'onglet Baux : un ZIP contenant
+//   etat_des_loyers.xlsx → onglet « État des loyers » : un bail par ligne (tous les baux de la période,
+//                          logements sans bail inclus), loyer, extras, loyers dus et reçus dans la période,
+//                          lien vers la copie du bail ; onglet « Par année » : loyers et occupation
+//   baux/                → chaque page de bail : Gauthier_6_Tremblay_2025_p1.jpg
 // Même principe que le dossier comptable : décompresser avant d'ouvrir le fichier Excel.
 
 import { supabase, BUCKET_RECUS } from "./supabase";
 import { triNumero } from "./dates";
+import { bailDansAnnees, libellePeriode, moisDansAnnees, periodeFichier } from "./baux";
 
 type Logement = { id: string; numero: string };
 type Bail = {
   id: string;
   logement_id: string;
-  statut: string;
+  statut: "a_venir" | "actif" | "termine";
   date_debut: string;
   date_fin: string | null;
+  date_depart: string | null;
   loyer_cents: number;
   extras_cents: number;
   mode_paiement: string;
@@ -21,8 +24,10 @@ type Bail = {
   locataires: string | null;
 };
 type Doc = { bail_id: string; storage_key: string; mime_type: string; created_at: string };
+type Mois = { bail_id: string; mois: string; montant_du_cents: number; recu_cents: number };
 
 const MODES: Record<string, string> = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement", comptant: "Comptant" };
+const STATUTS: Record<string, string> = { actif: "En cours", a_venir: "À venir", termine: "Terminé" };
 
 function nomSur(t: string): string {
   return t.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "x";
@@ -36,40 +41,47 @@ function versDate(iso: string | null): Date | null {
 
 export async function exporterDossierPreteur(
   immeuble: { id: string; nom: string; adresse?: string | null },
+  annees: number[],
   progression: (etape: string) => void
 ) {
   progression("Préparation…");
   const [{ default: ExcelJS }, { default: JSZip }] = await Promise.all([import("exceljs"), import("jszip")]);
+  const periode = libellePeriode(annees);
+  const anneesTriees = [...annees].sort((x, y) => x - y);
 
-  // 1. Données de l'immeuble
+  // 1. Données de l'immeuble : tous les baux qui touchent la période
   const [lo, ba] = await Promise.all([
     supabase.from("logements").select("id, numero").eq("immeuble_id", immeuble.id).is("deleted_at", null).eq("actif", true),
     supabase.from("v_baux")
-      .select("id, logement_id, statut, date_debut, date_fin, loyer_cents, extras_cents, mode_paiement, inclusions, locataires")
+      .select("id, logement_id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, mode_paiement, inclusions, locataires")
       .eq("immeuble_id", immeuble.id)
-      .in("statut", ["actif", "a_venir"])
       .order("date_debut"),
   ]);
   if (lo.error) throw new Error(lo.error.message);
   if (ba.error) throw new Error(ba.error.message);
   const logements = ((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero));
-  const baux = (ba.data ?? []) as Bail[];
-  // Un logement = son bail actif, sinon celui à venir
-  const bailDe = (logementId: string) =>
-    baux.find((b) => b.logement_id === logementId && b.statut === "actif") ??
-    baux.find((b) => b.logement_id === logementId && b.statut === "a_venir");
+  const baux = ((ba.data ?? []) as Bail[]).filter((b) => bailDansAnnees(b, annees));
+  const bauxDe = (logementId: string) => baux.filter((b) => b.logement_id === logementId);
 
-  const bailIds = logements.map((l) => bailDe(l.id)?.id).filter((x): x is string => Boolean(x));
+  const bailIds = baux.filter((b) => logements.some((l) => l.id === b.logement_id)).map((b) => b.id);
   const docs: Doc[] = [];
+  const mois: Mois[] = [];
   if (bailIds.length) {
-    const { data, error } = await supabase
-      .from("documents")
-      .select("bail_id, storage_key, mime_type, created_at")
-      .in("bail_id", bailIds)
-      .eq("type", "bail")
-      .order("created_at");
-    if (error) throw new Error(error.message);
-    docs.push(...((data ?? []) as Doc[]));
+    const [d, m] = await Promise.all([
+      supabase.from("documents")
+        .select("bail_id, storage_key, mime_type, created_at")
+        .in("bail_id", bailIds)
+        .eq("type", "bail")
+        .is("deleted_at", null)
+        .order("created_at"),
+      supabase.from("v_soldes")
+        .select("bail_id, mois, montant_du_cents, recu_cents")
+        .in("bail_id", bailIds),
+    ]);
+    if (d.error) throw new Error(d.error.message);
+    if (m.error) throw new Error(m.error.message);
+    docs.push(...((d.data ?? []) as Doc[]));
+    mois.push(...((m.data ?? []) as Mois[]).filter((x) => moisDansAnnees(x.mois, annees)));
   }
 
   // 2. Copies des baux
@@ -79,22 +91,22 @@ export async function exporterDossierPreteur(
   const manquants: string[] = [];
   let faits = 0;
   for (const l of logements) {
-    const b = bailDe(l.id);
-    if (!b) continue;
-    const pages = docs.filter((d) => d.bail_id === b.id);
-    const nomLoc = nomSur((b.locataires ?? "locataire").split(",")[0].trim().split(" ").slice(-1)[0]);
-    const noms: string[] = [];
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      const ext = p.mime_type === "application/pdf" ? "pdf" : "jpg";
-      const nom = `${nomSur(immeuble.nom)}_${nomSur(l.numero)}_${nomLoc}${pages.length > 1 ? `_p${i + 1}` : ""}.${ext}`;
-      const { data, error } = await supabase.storage.from(BUCKET_RECUS).download(p.storage_key);
-      if (error || !data) manquants.push(nom);
-      else { dossier.file(nom, data); noms.push(nom); }
-      faits++;
-      progression(`Copies de baux ${faits} / ${docs.length}`);
+    for (const b of bauxDe(l.id)) {
+      const pages = docs.filter((d) => d.bail_id === b.id);
+      const nomLoc = nomSur((b.locataires ?? "locataire").split(",")[0].trim().split(" ").slice(-1)[0]);
+      const noms: string[] = [];
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        const ext = p.mime_type === "application/pdf" ? "pdf" : "jpg";
+        const nom = `${nomSur(immeuble.nom)}_${nomSur(l.numero)}_${nomLoc}_${b.date_debut.slice(0, 4)}${pages.length > 1 ? `_p${i + 1}` : ""}.${ext}`;
+        const { data, error } = await supabase.storage.from(BUCKET_RECUS).download(p.storage_key);
+        if (error || !data) manquants.push(nom);
+        else { dossier.file(nom, data); noms.push(nom); }
+        faits++;
+        progression(`Copies de baux ${faits} / ${docs.length}`);
+      }
+      fichiersParBail.set(b.id, noms);
     }
-    fichiersParBail.set(b.id, noms);
   }
 
   // 3. État des loyers
@@ -104,24 +116,31 @@ export async function exporterDossierPreteur(
   classeur.created = new Date();
   const feuille = classeur.addWorksheet("État des loyers", { views: [{ state: "frozen", ySplit: 4 }] });
   const argent = '#,##0.00 "$"';
+  const enDate = new Date().toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" });
+  const bornes = anneesTriees.length > 1 && anneesTriees.every((a, i) => i === 0 || a === anneesTriees[i - 1] + 1)
+    ? ` (1er janvier ${anneesTriees[0]} au 31 décembre ${anneesTriees[anneesTriees.length - 1]})`
+    : "";
 
-  feuille.getCell("A1").value = `État des loyers — ${immeuble.nom}`;
+  feuille.getCell("A1").value = `État des loyers — ${immeuble.nom} — ${periode}`;
   feuille.getCell("A1").font = { bold: true, size: 14 };
-  feuille.getCell("A2").value = `${immeuble.adresse ?? ""}${immeuble.adresse ? " · " : ""}En date du ${new Date().toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}`;
+  feuille.getCell("A2").value = `${immeuble.adresse ?? ""}${immeuble.adresse ? " · " : ""}Période : ${periode}${bornes} · En date du ${enDate}`;
   feuille.getCell("A2").font = { color: { argb: "FF666666" } };
 
   const colonnes = [
-    { titre: "Logement", cle: "logement", largeur: 11 },
-    { titre: "Locataires", cle: "locataires", largeur: 30 },
-    { titre: "Début du bail", cle: "debut", largeur: 13, format: "yyyy-mm-dd" },
-    { titre: "Fin du bail", cle: "fin", largeur: 13, format: "yyyy-mm-dd" },
-    { titre: "Loyer mensuel", cle: "loyer", largeur: 14, format: argent },
-    { titre: "Extras / crédits", cle: "extras", largeur: 14, format: argent },
-    { titre: "Total mensuel", cle: "total", largeur: 14, format: argent },
-    { titre: "Total annuel", cle: "annuel", largeur: 15, format: argent },
-    { titre: "Paiement", cle: "paiement", largeur: 18 },
-    { titre: "Inclusions", cle: "inclusions", largeur: 24 },
-    { titre: "Copie du bail", cle: "copie", largeur: 34 },
+    { titre: "Logement", largeur: 11 },
+    { titre: "Locataires", largeur: 30 },
+    { titre: "Statut", largeur: 11 },
+    { titre: "Début du bail", largeur: 13, format: "yyyy-mm-dd" },
+    { titre: "Fin du bail", largeur: 13, format: "yyyy-mm-dd" },
+    { titre: "Loyer mensuel", largeur: 14, format: argent },
+    { titre: "Extras / crédits", largeur: 14, format: argent },
+    { titre: "Total mensuel", largeur: 14, format: argent },
+    { titre: "Mois dans la période", largeur: 11 },
+    { titre: "Loyers dus (période)", largeur: 16, format: argent },
+    { titre: "Loyers reçus (période)", largeur: 16, format: argent },
+    { titre: "Paiement", largeur: 18 },
+    { titre: "Inclusions", largeur: 24 },
+    { titre: "Copie du bail", largeur: 38 },
   ];
   colonnes.forEach((c, i) => {
     const col = feuille.getColumn(i + 1);
@@ -132,63 +151,115 @@ export async function exporterDossierPreteur(
   colonnes.forEach((c, i) => (entete.getCell(i + 1).value = c.titre));
   entete.font = { bold: true, color: { argb: "FFFFFFFF" } };
   entete.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B4D34" } };
+  entete.alignment = { wrapText: true, vertical: "middle" };
 
-  let premiere = 5;
+  const premiere = 5;
   let rangee = premiere;
-  let occupes = 0;
+  let logementsAvecBail = 0;
   // Résultats précalculés : l'aperçu de l'iPhone (et Google Sheets à l'import) n'évalue pas
   // les formules ; sans « result », les cellules de total paraissent vides.
-  const sommes = { 5: 0, 6: 0, 7: 0, 8: 0 } as Record<number, number>;
+  const sommes = { 9: 0, 10: 0, 11: 0 } as Record<number, number>;
   for (const l of logements) {
-    const b = bailDe(l.id);
-    const r = feuille.getRow(rangee++);
-    r.getCell(1).value = l.numero;
-    if (!b) {
-      r.getCell(2).value = "Vacant";
+    const liste = bauxDe(l.id);
+    if (liste.length === 0) {
+      const r = feuille.getRow(rangee++);
+      r.getCell(1).value = l.numero;
+      r.getCell(2).value = "Aucun bail dans la période (vacant)";
       r.getCell(2).font = { italic: true, color: { argb: "FFB3261E" } };
       continue;
     }
-    occupes++;
-    r.getCell(2).value = (b.locataires ?? "") + (b.statut === "a_venir" ? " (bail à venir)" : "");
-    r.getCell(3).value = versDate(b.date_debut);
-    r.getCell(4).value = b.date_fin ? versDate(b.date_fin) : "Indéterminée";
-    r.getCell(5).value = b.loyer_cents / 100;
-    r.getCell(6).value = b.extras_cents / 100;
-    const mensuelCents = b.loyer_cents + b.extras_cents;
-    r.getCell(7).value = { formula: `E${r.number}+F${r.number}`, result: mensuelCents / 100 };
-    r.getCell(8).value = { formula: `G${r.number}*12`, result: (mensuelCents * 12) / 100 };
-    sommes[5] += b.loyer_cents;
-    sommes[6] += b.extras_cents;
-    sommes[7] += mensuelCents;
-    sommes[8] += mensuelCents * 12;
-    r.getCell(9).value = MODES[b.mode_paiement] ?? b.mode_paiement;
-    r.getCell(10).value = b.inclusions ?? "";
-    const fichiers = fichiersParBail.get(b.id) ?? [];
-    if (fichiers.length) {
-      r.getCell(11).value = { text: fichiers.length > 1 ? `${fichiers[0]} (+${fichiers.length - 1})` : fichiers[0], hyperlink: `baux/${fichiers[0]}` };
-      r.getCell(11).font = { color: { argb: "FF1B4D34" }, underline: true };
-    } else {
-      r.getCell(11).value = "Copie à ajouter";
-      r.getCell(11).font = { italic: true, color: { argb: "FF999999" } };
+    logementsAvecBail++;
+    for (const b of liste) {
+      const r = feuille.getRow(rangee++);
+      r.getCell(1).value = l.numero;
+      r.getCell(2).value = b.locataires ?? "";
+      r.getCell(3).value = STATUTS[b.statut] ?? b.statut;
+      r.getCell(4).value = versDate(b.date_debut);
+      const fin = b.date_depart ?? b.date_fin;
+      r.getCell(5).value = fin ? versDate(fin) : "Indéterminée";
+      r.getCell(6).value = b.loyer_cents / 100;
+      r.getCell(7).value = b.extras_cents / 100;
+      r.getCell(8).value = { formula: `F${r.number}+G${r.number}`, result: (b.loyer_cents + b.extras_cents) / 100 };
+      const sesMois = mois.filter((m) => m.bail_id === b.id);
+      const du = sesMois.reduce((s, m) => s + m.montant_du_cents, 0);
+      const recu = sesMois.reduce((s, m) => s + m.recu_cents, 0);
+      r.getCell(9).value = sesMois.length;
+      r.getCell(10).value = du / 100;
+      r.getCell(11).value = recu / 100;
+      sommes[9] += sesMois.length;
+      sommes[10] += du;
+      sommes[11] += recu;
+      r.getCell(12).value = MODES[b.mode_paiement] ?? b.mode_paiement;
+      r.getCell(13).value = b.inclusions ?? "";
+      const fichiers = fichiersParBail.get(b.id) ?? [];
+      if (fichiers.length) {
+        r.getCell(14).value = { text: fichiers.length > 1 ? `${fichiers[0]} (+${fichiers.length - 1})` : fichiers[0], hyperlink: `baux/${fichiers[0]}` };
+        r.getCell(14).font = { color: { argb: "FF1B4D34" }, underline: true };
+      } else {
+        r.getCell(14).value = "Copie à ajouter";
+        r.getCell(14).font = { italic: true, color: { argb: "FF999999" } };
+      }
     }
   }
   const derniere = rangee - 1;
   const total = feuille.getRow(rangee + 1);
   total.getCell(1).value = "TOTAL";
-  total.getCell(2).value = `${occupes} / ${logements.length} logements occupés`;
-  for (const c of [5, 6, 7, 8]) {
+  total.getCell(2).value = `${bailIds.length} bail(s) · ${logementsAvecBail} / ${logements.length} logements loués dans la période`;
+  for (const c of [9, 10, 11]) {
     const lettre = String.fromCharCode(64 + c);
-    total.getCell(c).value = { formula: `SUM(${lettre}${premiere}:${lettre}${derniere})`, result: sommes[c] / 100 };
+    total.getCell(c).value = derniere >= premiere
+      ? { formula: `SUM(${lettre}${premiere}:${lettre}${derniere})`, result: c === 9 ? sommes[c] : sommes[c] / 100 }
+      : 0;
   }
   total.font = { bold: true };
+
+  // Revenu mensuel actuel : baux en cours seulement (un logement ne compte qu'une fois)
+  const enCours = baux.filter((b) => b.statut === "actif" && logements.some((l) => l.id === b.logement_id));
+  if (enCours.length) {
+    const actuel = feuille.getRow(rangee + 2);
+    const mensuel = enCours.reduce((s, b) => s + b.loyer_cents + b.extras_cents, 0);
+    actuel.getCell(1).value = "Baux en cours";
+    actuel.getCell(2).value = `${enCours.length} logement(s) · revenu mensuel actuel ; annuel = mensuel × 12`;
+    actuel.getCell(8).value = mensuel / 100;
+    actuel.getCell(10).value = (mensuel * 12) / 100;
+    actuel.font = { italic: true };
+  }
+
+  // 4. Par année : loyers dus, reçus, mois loués et taux d'occupation
+  const parAnnee = classeur.addWorksheet("Par année");
+  parAnnee.getCell("A1").value = `Loyers par année — ${immeuble.nom}`;
+  parAnnee.getCell("A1").font = { bold: true, size: 14 };
+  parAnnee.getCell("A2").value = `Reçus en date du ${enDate}. Occupation = mois loués / (${logements.length} logements × 12).`;
+  parAnnee.getCell("A2").font = { color: { argb: "FF666666" } };
+  const titres = ["Année", "Loyers dus", "Loyers reçus", "Mois loués", "Taux d'occupation"];
+  [8, 16, 16, 12, 16].forEach((w, i) => (parAnnee.getColumn(i + 1).width = w));
+  parAnnee.getColumn(2).numFmt = argent;
+  parAnnee.getColumn(3).numFmt = argent;
+  parAnnee.getColumn(5).numFmt = "0.0 %";
+  const ent = parAnnee.getRow(4);
+  titres.forEach((t, i) => (ent.getCell(i + 1).value = t));
+  ent.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  ent.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B4D34" } };
+  let ra = 5;
+  for (const a of anneesTriees) {
+    const ms = mois.filter((m) => m.mois.startsWith(`${a}-`));
+    const r = parAnnee.getRow(ra++);
+    r.getCell(1).value = a;
+    r.getCell(2).value = ms.reduce((s, m) => s + m.montant_du_cents, 0) / 100;
+    r.getCell(3).value = ms.reduce((s, m) => s + m.recu_cents, 0) / 100;
+    r.getCell(4).value = ms.length;
+    const capacite = logements.length * 12;
+    r.getCell(5).value = { formula: capacite ? `D${r.number}/${capacite}` : "0", result: capacite ? ms.length / capacite : 0 };
+  }
 
   zip.file("etat_des_loyers.xlsx", await classeur.xlsx.writeBuffer());
   if (manquants.length) zip.file("COPIES_MANQUANTES.txt", manquants.join("\r\n"));
   zip.file(
     "LISEZMOI.txt",
-    `Dossier prêteur — ${immeuble.nom}\r\n\r\n` +
+    `Dossier prêteur — ${immeuble.nom} — période ${periode}\r\n\r\n` +
     "1. Décompresser ce fichier ZIP.\r\n" +
-    "2. Ouvrir etat_des_loyers.xlsx : un logement par ligne, avec un lien vers la copie du bail.\r\n" +
+    "2. Ouvrir etat_des_loyers.xlsx : un bail par ligne (tous les baux de la période), avec un lien vers la copie du bail.\r\n" +
+    "   L'onglet « Par année » donne les loyers dus, reçus et le taux d'occupation de chaque année.\r\n" +
     "3. Le dossier baux contient les copies (photos ou PDF) à transmettre au prêteur.\r\n"
   );
 
@@ -197,15 +268,12 @@ export async function exporterDossierPreteur(
   const url = URL.createObjectURL(contenu);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `dossier_preteur_${nomSur(immeuble.nom)}_${new Date().toISOString().slice(0, 10)}.zip`;
+  a.download = `dossier_preteur_${nomSur(immeuble.nom)}_${periodeFichier(annees)}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 
-  const sansCopie = logements.filter((l) => {
-    const b = bailDe(l.id);
-    return b && (fichiersParBail.get(b.id) ?? []).length === 0;
-  }).length;
-  return { occupes, total: logements.length, sansCopie, manquants: manquants.length };
+  const sansCopie = bailIds.filter((id) => (fichiersParBail.get(id) ?? []).length === 0).length;
+  return { nbBaux: bailIds.length, total: logements.length, sansCopie, manquants: manquants.length };
 }

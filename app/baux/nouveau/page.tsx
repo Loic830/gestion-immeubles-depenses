@@ -1,30 +1,31 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase, BUCKET_RECUS } from "@/lib/supabase";
-import { preparerFichier, type FichierPrepare } from "@/lib/image";
+import { type FichierPrepare } from "@/lib/image";
 import { useSession } from "@/lib/useSession";
-import { versCents, formatCents } from "@/lib/argent";
-import { finApresMois, prochainPremierJuillet, triNumero, dateLisible, aujourdhuiIso } from "@/lib/dates";
+import { prochainPremierJuillet, dateLisible, aujourdhuiIso, lendemain } from "@/lib/dates";
+import FormulaireBail, { nouveauLocataire, type BailSaisi } from "@/components/FormulaireBail";
 
-type Immeuble = { id: string; nom: string };
-type Logement = { id: string; immeuble_id: string; numero: string };
-type LocataireExistant = { id: string; prenom: string; nom: string };
-type LocataireForm = { cle: string; existantId: string; prenom: string; nom: string; telephone: string; courriel: string };
-type ExtraForm = { cle: string; libelle: string; montantSaisi: string; credit?: boolean }; // credit = déduit chaque mois
-type Duree = "12" | "autre" | "indeterminee";
-type Mode = "interac" | "cheque" | "prelevement" | "comptant";
+type BailExistant = {
+  id: string;
+  statut: "a_venir" | "actif" | "termine";
+  date_debut: string;
+  date_fin: string | null;
+  date_depart: string | null;
+  locataires: string | null;
+};
+/** Pop-up « Il y a déjà un bail en cours… » */
+type Remplacement = { ancien: BailExistant; finAncien: string; p: BailSaisi; pages: FichierPrepare[] };
 
-const MODES: { code: Mode; libelle: string }[] = [
-  { code: "interac", libelle: "Virement Interac" },
-  { code: "cheque", libelle: "Chèques postdatés" },
-  { code: "prelevement", libelle: "Prélèvement" },
-  { code: "comptant", libelle: "Comptant" },
-];
-
-const nouveauLocataire = (): LocataireForm => ({ cle: crypto.randomUUID(), existantId: "", prenom: "", nom: "", telephone: "", courriel: "" });
+/** Dernier jour du mois avant la date : « 2027-07-01 » ou « 2027-07-15 » → « 2027-06-30 » */
+function finMoisPrecedent(iso: string): string {
+  const [a, m] = iso.split("-").map(Number);
+  const d = new Date(a, m - 1, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function PageNouveauBail() {
   return (
@@ -39,80 +40,28 @@ function NouveauBail() {
   const params = useSearchParams();
   const { session, pret } = useSession();
 
-  const [immeubles, setImmeubles] = useState<Immeuble[]>([]);
-  const [logements, setLogements] = useState<Logement[]>([]);
-  const [existants, setExistants] = useState<LocataireExistant[]>([]);
-
-  const [logementId, setLogementId] = useState(params.get("logement") ?? "");
-  const [locataires, setLocataires] = useState<LocataireForm[]>([nouveauLocataire()]);
-  // ?debut=AAAA-MM-JJ : arrivée depuis « Entrer le nouveau bail » (lendemain du départ)
-  const [dateDebut, setDateDebut] = useState(
-    /^\d{4}-\d{2}-\d{2}$/.test(params.get("debut") ?? "") ? (params.get("debut") as string) : prochainPremierJuillet()
-  );
-  const [duree, setDuree] = useState<Duree>("12");
-  const [dateFinAutre, setDateFinAutre] = useState("");
-  const [loyerSaisi, setLoyerSaisi] = useState("");
-  const [jourEcheance, setJourEcheance] = useState("1");
-  const [mode, setMode] = useState<Mode>("interac");
-  const [extras, setExtras] = useState<ExtraForm[]>([]);
-  const [inclusions, setInclusions] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const [pages, setPages] = useState<FichierPrepare[]>([]);
-  const [traitement, setTraitement] = useState(false);
-  const champPhoto = useRef<HTMLInputElement>(null);
-  const champFichier = useRef<HTMLInputElement>(null);
-
   const [envoi, setEnvoi] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [remplacement, setRemplacement] = useState<Remplacement | null>(null);
 
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
-      const [im, lo, loc] = await Promise.all([
-        supabase.from("immeubles").select("id, nom").is("deleted_at", null).order("nom"),
-        supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true),
-        supabase.from("locataires").select("id, prenom, nom").is("deleted_at", null).order("nom"),
-      ]);
-      setImmeubles((im.data ?? []) as Immeuble[]);
-      setLogements(((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero)));
-      setExistants((loc.data ?? []) as LocataireExistant[]);
-    })();
-  }, [session]);
-
-  const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
-  const loyerCents = versCents(loyerSaisi);
-  const signe = (e: ExtraForm) => (e.credit ? -1 : 1);
-  const extrasCents = extras.reduce((s, e) => s + signe(e) * (versCents(e.montantSaisi) ?? 0), 0);
-
-  async function ajouterPages(liste: FileList | null) {
-    if (!liste || liste.length === 0) return;
-    setErreur(null);
-    setTraitement(true);
-    try {
-      const prepares: FichierPrepare[] = [];
-      for (const f of Array.from(liste)) prepares.push(await preparerFichier(f));
-      setPages((avant) => [...avant, ...prepares]);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Erreur pendant le traitement de la photo.");
-    } finally {
-      setTraitement(false);
-      if (champPhoto.current) champPhoto.current.value = "";
-      if (champFichier.current) champFichier.current.value = "";
-    }
-  }
-
-  function retirerPage(i: number) {
-    setPages((avant) => {
-      const copie = [...avant];
-      const [retiree] = copie.splice(i, 1);
-      if (retiree?.apercuUrl) URL.revokeObjectURL(retiree.apercuUrl);
-      return copie;
-    });
-  }
+  // ?debut=AAAA-MM-JJ : arrivée depuis « Entrer le nouveau bail » (lendemain du départ)
+  const debutParam = params.get("debut") ?? "";
+  const [initial] = useState(() => ({
+    logementId: params.get("logement") ?? "",
+    locataires: [nouveauLocataire()],
+    dateDebut: /^\d{4}-\d{2}-\d{2}$/.test(debutParam) ? debutParam : prochainPremierJuillet(),
+    duree: "12" as const,
+    dateFinAutre: "",
+    loyerSaisi: "",
+    jourEcheance: "1",
+    mode: "interac" as const,
+    extras: [],
+    inclusions: "",
+    notes: "",
+  }));
 
   /** Envoie les pages du bail une fois le bail créé ; retourne le nombre d'échecs. */
-  async function televerserPages(bailId: string): Promise<number> {
+  async function televerserPages(bailId: string, pages: FichierPrepare[]): Promise<number> {
     let echecs = 0;
     for (let i = 0; i < pages.length; i++) {
       setEnvoi(`Envoi du bail ${i + 1} / ${pages.length}…`);
@@ -131,63 +80,73 @@ function NouveauBail() {
     return echecs;
   }
 
-  function majLocataire(cle: string, patch: Partial<LocataireForm>) {
-    setLocataires((avant) => avant.map((l) => (l.cle === cle ? { ...l, ...patch } : l)));
-  }
-  function majExtra(cle: string, patch: Partial<ExtraForm>) {
-    setExtras((avant) => avant.map((e) => (e.cle === cle ? { ...e, ...patch } : e)));
-  }
-
-  async function enregistrer() {
-    setErreur(null);
-    if (!logementId) return setErreur("Choisis le logement.");
-    if (!dateDebut) return setErreur("Entre la date de début.");
-    if (duree === "autre" && !dateFinAutre) return setErreur("Entre la date de fin.");
-    if (dateFin && dateFin < dateDebut) return setErreur("La date de fin est avant la date de début.");
-    if (loyerCents === null) return setErreur("Entre le loyer mensuel (ex. 950,00).");
-    const locs = locataires.filter((l) => l.existantId || l.prenom.trim() || l.nom.trim());
-    if (locs.length === 0) return setErreur("Ajoute au moins un locataire.");
-    if (locs.some((l) => !l.existantId && (!l.prenom.trim() || !l.nom.trim()))) return setErreur("Chaque nouveau locataire a besoin d'un prénom et d'un nom.");
-    const ext = extras.filter((e) => e.libelle.trim() || e.montantSaisi.trim());
-    if (ext.some((e) => !e.libelle.trim() || !versCents(e.montantSaisi))) return setErreur("Chaque extra ou crédit a besoin d'un libellé et d'un montant.");
-    if (loyerCents + extrasCents < 0) return setErreur("Les crédits dépassent le loyer : le total dû chaque mois ne peut pas être négatif.");
-
-    setEnvoi("Enregistrement…");
-    const { data, error } = await supabase.rpc("creer_bail", {
-      p: {
-        logement_id: logementId,
-        date_debut: dateDebut,
-        date_fin: dateFin || null,
-        loyer_cents: loyerCents,
-        jour_echeance: Number(jourEcheance) || 1,
-        mode_paiement: mode,
-        inclusions: inclusions || null,
-        notes: notes || null,
-        locataires: locs.map((l) => l.existantId
-          ? { id: l.existantId }
-          : { prenom: l.prenom, nom: l.nom, telephone: l.telephone || null, courriel: l.courriel || null }),
-        extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: signe(e) * (versCents(e.montantSaisi) ?? 0) })),
-      },
-    });
-    if (error) {
-      setEnvoi(null);
-      setErreur(error.message.includes("baux_sans_chevauchement")
-        ? "Ce logement a déjà un bail sur ces dates. Vérifie les dates ou termine l'ancien bail."
-        : error.message);
-      return;
-    }
-    const bailId = data as string;
+  async function terminer(bailId: string, pages: FichierPrepare[]) {
     if (pages.length) {
-      const echecs = await televerserPages(bailId);
+      const echecs = await televerserPages(bailId, pages);
       if (echecs) window.alert(`Le bail est enregistré, mais ${echecs} page(s) n'ont pas pu être envoyées. Ajoute-les depuis la fiche du bail.`);
     }
     router.replace(`/baux/${bailId}`);
   }
 
-  if (!pret || !session) return null;
+  function messageErreur(message: string): string {
+    return message.includes("baux_sans_chevauchement")
+      ? "Ce logement a déjà un bail sur ces dates. Vérifie les dates ou termine l'ancien bail."
+      : message;
+  }
 
-  const logement = logements.find((l) => l.id === logementId);
-  const immeubleDuLogement = immeubles.find((i) => i.id === logement?.immeuble_id);
+  async function enregistrer(p: BailSaisi, pages: FichierPrepare[]) {
+    setEnvoi("Vérification…");
+    // Un bail couvre-t-il déjà une partie de la période du nouveau bail ?
+    const { data, error: errLecture } = await supabase.from("v_baux")
+      .select("id, statut, date_debut, date_fin, date_depart, locataires")
+      .eq("logement_id", p.logement_id);
+    if (errLecture) { setEnvoi(null); return setErreur(errLecture.message); }
+    const finNouveau = p.date_fin ?? "9999-12-31";
+    const enConflit = ((data ?? []) as BailExistant[]).filter((b) =>
+      b.date_debut <= finNouveau && (b.date_depart ?? b.date_fin ?? "9999-12-31") >= p.date_debut);
+
+    if (enConflit.length > 0) {
+      setEnvoi(null);
+      const finAncien = finMoisPrecedent(p.date_debut);
+      const ancien = enConflit[0];
+      if (enConflit.length === 1 && ancien.date_debut <= finAncien && !ancien.date_depart) {
+        setRemplacement({ ancien, finAncien, p, pages });
+        return;
+      }
+      // Cas que le pop-up ne peut pas régler : on explique quoi faire
+      const qui = ancien.locataires ?? "un locataire";
+      if (enConflit.length === 1 && ancien.date_depart) {
+        return setErreur(`Le bail de ${qui} se termine déjà le ${dateLisible(ancien.date_depart)} (départ inscrit). `
+          + `Le nouveau bail peut commencer le ${dateLisible(lendemain(ancien.date_depart))}, ou annule la fin de ce bail sur sa fiche.`);
+      }
+      return setErreur(`Ce logement a déjà un bail qui commence le ${dateLisible(ancien.date_debut)} (${qui}). `
+        + "Vérifie les dates, ou modifie ce bail depuis sa fiche.");
+    }
+
+    setEnvoi("Enregistrement…");
+    const { data: bailId, error } = await supabase.rpc("creer_bail", { p });
+    if (error) {
+      setEnvoi(null);
+      return setErreur(messageErreur(error.message));
+    }
+    await terminer(bailId as string, pages);
+  }
+
+  async function confirmerRemplacement() {
+    if (!remplacement) return;
+    const { ancien, p, pages } = remplacement;
+    setRemplacement(null);
+    setErreur(null);
+    setEnvoi("Enregistrement…");
+    const { data: bailId, error } = await supabase.rpc("creer_bail_en_remplacement", { p, p_ancien: ancien.id });
+    if (error) {
+      setEnvoi(null);
+      return setErreur(messageErreur(error.message));
+    }
+    await terminer(bailId as string, pages);
+  }
+
+  if (!pret || !session) return null;
 
   return (
     <main className="page">
@@ -198,162 +157,44 @@ function NouveauBail() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      {/* Logement */}
-      <section className="carte">
-        <label htmlFor="logement">Logement</label>
-        <select id="logement" value={logementId} onChange={(e) => setLogementId(e.target.value)}>
-          <option value="">— Choisir —</option>
-          {immeubles.map((im) => (
-            <optgroup key={im.id} label={im.nom}>
-              {logements.filter((l) => l.immeuble_id === im.id).map((l) => (
-                <option key={l.id} value={l.id}>{im.nom} · {l.numero}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {logement && <p className="aide">{immeubleDuLogement?.nom} · logement {logement.numero}</p>}
-      </section>
+      <FormulaireBail
+        initial={initial}
+        avecPhotos
+        texteBouton="Enregistrer le bail"
+        envoi={envoi}
+        setErreur={setErreur}
+        onEnregistrer={enregistrer}
+      />
 
-      {/* Locataires */}
-      <section className="carte">
-        <strong>Locataires</strong>
-        {locataires.map((l, i) => (
-          <div key={l.cle} className={i > 0 ? "bloc-locataire" : ""} style={i === 0 ? { marginTop: 8 } : undefined}>
-            <div className="entete" style={{ margin: "0 0 6px" }}>
-              <span className="aide" style={{ margin: 0 }}>{i === 0 ? "Locataire principal" : `Colocataire ${i}`}</span>
-              {locataires.length > 1 && (
-                <button type="button" className="lien-retirer" onClick={() => setLocataires((a) => a.filter((x) => x.cle !== l.cle))}>Retirer</button>
-              )}
+      {remplacement && (
+        <div className="voile" role="dialog" aria-modal="true" aria-labelledby="titre-remplacement">
+          <div className="feuille">
+            <strong id="titre-remplacement" style={{ fontSize: 19 }}>Il y a déjà un bail sur ce logement</strong>
+            <p>
+              Il y a déjà un bail {remplacement.ancien.statut === "a_venir" ? "à venir" : "en cours"} au nom
+              de <strong>{remplacement.ancien.locataires ?? "locataire à préciser"}</strong>
+              {remplacement.ancien.date_fin
+                ? <> qui se termine le <strong>{dateLisible(remplacement.ancien.date_fin)}</strong>.</>
+                : <>, à durée indéterminée.</>}
+            </p>
+            <p>
+              Est-ce que vous voulez mettre fin à ce bail le <strong>{dateLisible(remplacement.finAncien)}</strong>,
+              {" "}dernier jour du mois avant le début du nouveau bail ({dateLisible(remplacement.p.date_debut)}) ?
+            </p>
+            <p className="aide">
+              Les loyers prévus après {dateLisible(remplacement.finAncien)} seront retirés de l&apos;ancien bail.
+              Les mois passés et les paiements restent dans son historique. Le nouveau bail est enregistré tel que saisi.
+            </p>
+            <div className="rangee" style={{ marginTop: 12 }}>
+              <button className="bouton" onClick={() => {
+                setRemplacement(null);
+                setErreur("Le nouveau bail n'est pas enregistré. Change les dates ou le logement, ou réponds Oui pour mettre fin à l'ancien bail.");
+              }}>Non</button>
+              <button className="bouton principal" onClick={confirmerRemplacement}>Oui, mettre fin</button>
             </div>
-            {existants.length > 0 && (
-              <select value={l.existantId} onChange={(e) => majLocataire(l.cle, { existantId: e.target.value })} aria-label="Locataire déjà connu">
-                <option value="">Nouveau locataire</option>
-                {existants.map((x) => <option key={x.id} value={x.id}>{x.prenom} {x.nom}</option>)}
-              </select>
-            )}
-            {!l.existantId && (
-              <>
-                <div className="rangee" style={{ marginTop: 8 }}>
-                  <input placeholder="Prénom" autoComplete="off" value={l.prenom} onChange={(e) => majLocataire(l.cle, { prenom: e.target.value })} />
-                  <input placeholder="Nom" autoComplete="off" value={l.nom} onChange={(e) => majLocataire(l.cle, { nom: e.target.value })} />
-                </div>
-                <div className="rangee" style={{ marginTop: 8 }}>
-                  <input placeholder="Téléphone" type="tel" inputMode="tel" autoComplete="off" value={l.telephone} onChange={(e) => majLocataire(l.cle, { telephone: e.target.value })} />
-                  <input placeholder="Courriel" type="email" autoComplete="off" value={l.courriel} onChange={(e) => majLocataire(l.cle, { courriel: e.target.value })} />
-                </div>
-              </>
-            )}
           </div>
-        ))}
-        <button type="button" className="lien-filtres" onClick={() => setLocataires((a) => [...a, nouveauLocataire()])}>+ Ajouter un colocataire</button>
-      </section>
-
-      {/* Durée */}
-      <section className="carte">
-        <label htmlFor="debut">Début du bail</label>
-        <input id="debut" type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
-
-        <label>Durée</label>
-        <div className="choix">
-          <button type="button" className={duree === "12" ? "actif" : ""} onClick={() => setDuree("12")}>12 mois</button>
-          <button type="button" className={duree === "autre" ? "actif" : ""} onClick={() => setDuree("autre")}>Autre</button>
-          <button type="button" className={duree === "indeterminee" ? "actif" : ""} onClick={() => setDuree("indeterminee")}>Indéterminée</button>
         </div>
-        {duree === "autre" && (
-          <>
-            <label htmlFor="fin">Fin du bail</label>
-            <input id="fin" type="date" value={dateFinAutre} onChange={(e) => setDateFinAutre(e.target.value)} />
-          </>
-        )}
-        {duree === "12" && dateFin && <p className="aide">Fin le {dateLisible(dateFin)}.</p>}
-        {duree === "indeterminee" && <p className="aide">Les loyers dus se prolongent automatiquement chaque mois.</p>}
-      </section>
-
-      {/* Loyer */}
-      <section className="carte">
-        <label htmlFor="loyer">Loyer mensuel</label>
-        <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
-
-        <label>Extras et crédits chaque mois</label>
-        {extras.map((e) => (
-          <div className="rangee" key={e.cle} style={{ marginBottom: 8, alignItems: "center" }}>
-            <input placeholder={e.credit ? "ex. Tonte de pelouse" : "ex. Stationnement"} value={e.libelle}
-                   aria-label={e.credit ? "Raison du crédit" : "Libellé de l'extra"}
-                   onChange={(ev) => majExtra(e.cle, { libelle: ev.target.value })} />
-            <div style={{ position: "relative" }}>
-              <span aria-hidden="true" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontWeight: 700,
-                                                color: e.credit ? "var(--succes)" : "var(--discret)" }}>{e.credit ? "−" : "+"}</span>
-              <input placeholder="Montant" inputMode="decimal" value={e.montantSaisi} style={{ paddingLeft: 28, width: "100%" }}
-                     aria-label={e.credit ? "Montant du crédit (déduit)" : "Montant de l'extra"}
-                     onChange={(ev) => majExtra(e.cle, { montantSaisi: ev.target.value })} />
-            </div>
-            <button type="button" className="lien-retirer" style={{ flex: "0 0 auto" }} onClick={() => setExtras((a) => a.filter((x) => x.cle !== e.cle))} aria-label="Retirer l'extra">×</button>
-          </div>
-        ))}
-        <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
-                onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "" }])}>
-          + Ajouter un extra
-        </button>
-        <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
-                onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "", credit: true }])}>
-          − Ajouter un crédit (ex. tonte de pelouse)
-        </button>
-        {loyerCents !== null && (
-          <p className="aide"><strong>Total dû chaque mois : {formatCents(loyerCents + extrasCents)}</strong></p>
-        )}
-
-        <label>Mode de paiement</label>
-        <div className="choix-2">
-          {MODES.map((m) => (
-            <button key={m.code} type="button" className={mode === m.code ? "actif" : ""} onClick={() => setMode(m.code)}>{m.libelle}</button>
-          ))}
-        </div>
-
-        <label htmlFor="jour">Jour du mois où le loyer est dû</label>
-        <input id="jour" inputMode="numeric" value={jourEcheance} onChange={(e) => setJourEcheance(e.target.value.replace(/\D/g, "").slice(0, 2))} />
-      </section>
-
-      {/* Copie du bail */}
-      <section className="carte">
-        <strong>Bail signé</strong>
-        <p className="aide">Facultatif : photographie chaque page du bail, ou joins le PDF. Tu pourras aussi le faire plus tard depuis la fiche.</p>
-        <div className="rangee">
-          <button type="button" className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={traitement}>
-            {traitement ? "Traitement…" : pages.length ? "+ Page" : "Photo du bail"}
-          </button>
-          <button type="button" className="bouton" onClick={() => champFichier.current?.click()} disabled={traitement}>
-            Fichier ou PDF
-          </button>
-        </div>
-        <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterPages(e.target.files)} />
-        <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterPages(e.target.files)} />
-        {pages.length > 0 && (
-          <div className="photos">
-            {pages.map((p, i) => (
-              <div className="vignette" key={i}>
-                {p.apercuUrl ? <img src={p.apercuUrl} alt={`Bail, page ${i + 1}`} /> : "PDF"}
-                <button type="button" onClick={() => retirerPage(i)} aria-label="Retirer">×</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Détails */}
-      <section className="carte">
-        <label htmlFor="inclusions">Inclusions (dans le loyer)</label>
-        <input id="inclusions" placeholder="ex. chauffage, eau chaude, électroménagers" value={inclusions} onChange={(e) => setInclusions(e.target.value)} />
-        <label htmlFor="notes">Notes</label>
-        <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </section>
-
-      <div className="barre-actions">
-        <div className="contenu">
-          <button className="bouton principal" onClick={enregistrer} disabled={envoi !== null || traitement}>
-            {envoi ?? "Enregistrer le bail"}
-          </button>
-        </div>
-      </div>
+      )}
     </main>
   );
 }

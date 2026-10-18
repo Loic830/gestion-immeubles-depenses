@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -27,6 +27,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 10. `supabase/010_profil_actifs.sql` — valeur d'achat et vente d'un immeuble (v0.8.5).
 11. `supabase/011_frais_fixes.sql` — Frais fixes : hypotheques, hypotheque_releves, assurances, taxes_versements ;
     RPC `payer_frais_fixe` / `annuler_paiement_frais_fixe` ; la table documents accepte la police d'assurance (v0.8.6).
+12. `supabase/012_modifier_bail.sql` — RPC `modifier_bail` (corriger tous les détails d'un bail) et
+    `creer_bail_en_remplacement` (termine le bail en cours, puis crée le nouveau) ; `documents.deleted_at` (v0.8.7).
 
 ## 2. Lancer en local
 
@@ -62,10 +64,14 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 | `lib/amortissement.ts` | Ventilation capital / intérêts : taux fixe composé semestriellement, versements mensuels |
 | `lib/fraisFixes.ts` | Types, intérêts de l'année (relevé prioritaire), statuts des versements, totaux par immeuble |
 | `app/loyers/page.tsx` | Loyers du mois par immeuble, retards (tous mois), feuille « Reçu » / partiel / annulation |
-| `app/baux/page.tsx` | Les 21 logements par immeuble avec leur bail courant, taux d'occupation, alertes d'avis TAL |
-| `app/baux/nouveau/page.tsx` | Nouveau bail : logement, colocataires, durée (12 mois / autre / indéterminée), loyer, extras, mode de paiement |
-| `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus et leur état |
-| `lib/exportBaux.ts` | Dossier prêteur par immeuble : etat_des_loyers.xlsx (liens vers les baux, totaux mensuel et annuel) + dossier baux/ |
+| `app/baux/page.tsx` | Les 21 logements par immeuble avec les baux des années choisies, filtres (années, immeuble, recherche), occupation, alertes d'avis TAL |
+| `app/baux/nouveau/page.tsx` | Nouveau bail (formulaire partagé) ; pop-up si un bail couvre déjà la période (remplacement) |
+| `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus ; « Modifier le bail », « Historique » |
+| `app/baux/[id]/modifier/page.tsx` | Modifier le bail : tous les détails (RPC modifier_bail) |
+| `app/baux/logement/[id]/page.tsx` | Historique de tous les baux d'un logement |
+| `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail |
+| `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » |
+| `lib/exportBaux.ts` | Dossier prêteur par immeuble et par période : etat_des_loyers.xlsx (un bail par ligne, loyers dus et reçus de la période, onglet « Par année ») + dossier baux/ |
 | `app/vehicule/page.tsx` | Onglet Véhicule : trajets (favoris, motif), frais (reçu), compteur, résumé du prorata, export |
 | `components/ConstructeurTrajet.tsx` | Composer un trajet par lieux ; distances retenues dans les deux sens |
 | `lib/vehicule.ts` | Calcul du prorata : km immeubles / km totaux, part déductible et répartition par immeuble |
@@ -200,7 +206,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 ## En-tête, navigation et Profil (v0.8.5)
 
 - En-tête vert fixe sur toutes les pages sauf la connexion : « Immeubles So-Max » à gauche,
-  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.7).
+  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.8).
 - Onglets du bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
 - La déconnexion est dans le Profil (retirée de la page Dépenses).
 - Profil > Mon compte : nom et cellulaire gardés dans le compte Supabase (`user_metadata`) ;
@@ -238,6 +244,27 @@ dossier_depenses_2026-01-01_2026-12-31.zip
   Les versements hypothécaires ne vont pas dans Dépenses : seuls les intérêts calculés comptent.
 - Total des frais fixes de l'année : intérêts retenus + primes des polices qui commencent dans l'année + taxes de l'année.
 
+## Baux : période, historique, modification (v0.8.7)
+
+- **Période** : puces d'années en haut de l'onglet Baux (année courante à année courante − 6), une ou plusieurs ;
+  par défaut l'année courante. Gardée dans l'adresse (`?a=2026,2025`), avec le filtre d'immeuble (`&i=<id>`).
+  Un bail fait partie de la période s'il couvre au moins un jour d'une année choisie ; les baux à venir suivent l'année courante.
+  Recherche par locataire (sans accents) ou numéro de logement.
+- **Dossier prêteur** : le bouton affiche la période (ex. « 2024 à 2026 ») et le ZIP ne contient que les baux de la période
+  (`dossier_preteur_Gauthier_2024-2026.zip`). Excel : un bail par ligne (statut, début, fin réelle, loyer, extras, mois dans la
+  période, loyers dus et reçus dans la période), logements sans bail inclus, total de la période, revenu mensuel des baux en cours ;
+  onglet « Par année » (dus, reçus, mois loués, taux d'occupation). Totaux avec `result` (aperçu iPhone).
+- **Historique** : sur la fiche du bail, bouton « Historique (n) » → tous les baux du logement, du plus récent au plus ancien.
+- **Modifier le bail** : logement, locataires (coordonnées, ajout, retrait, principal), dates, durée, loyer, extras et crédits,
+  mode, jour, inclusions, notes. RPC `modifier_bail` en une transaction : mois hors des nouvelles dates retirés (refusé s'ils ont des
+  paiements), mois manquants créés, montants dus recalculés (paiements intacts), fenêtre TAL recalculée. Si le loyer a déjà été
+  changé (« Changer le loyer »), le champ corrige le loyer du début et les changements restent appliqués.
+- **Pages du bail** : × sur une vignette retire une page ajoutée par erreur (suppression douce, `documents.deleted_at`).
+- **Remplacement** : en enregistrant un nouveau bail, si un bail couvre déjà la période sur ce logement, un pop-up propose de
+  mettre fin à l'ancien bail le dernier jour du mois avant le début du nouveau (ex. nouveau bail le 1er décembre → ancien terminé
+  le 30 novembre). « Oui » appelle `creer_bail_en_remplacement` : `terminer_bail` + `creer_bail` dans une seule transaction
+  (refusé s'il y a des paiements après cette date ; rien n'est enregistré). « Non » n'enregistre rien.
+
 ## Thème
 
 - Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
@@ -265,7 +292,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8.7 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
+1. v0.8.8 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
 2. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
 3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
 4. v1.0 : rapport annuel par immeuble (revenus + dépenses + intérêts hypothécaires de Frais fixes), format T776 / TP-128.
