@@ -9,6 +9,7 @@ import BarreOnglets from "@/components/BarreOnglets";
 
 // Profil : mon compte (nom, cellulaire, courriel, mot de passe, déconnexion)
 // et Actifs (immeubles : ajouter, ouvrir le détail, voir les immeubles vendus).
+// En bas : « Tester les notifications possibles » (v0.8.9).
 
 type Immeuble = {
   id: string;
@@ -234,6 +235,9 @@ export default function PageProfil() {
       )}
 
       <div style={{ marginTop: 32 }}>
+        <Link href="/profil/notifications" className="bouton plein" style={{ marginBottom: 12 }}>
+          Tester les notifications possibles
+        </Link>
         <button className="bouton plein lien-danger" onClick={seDeconnecter}>Se déconnecter</button>
       </div>
 

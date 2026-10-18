@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -29,6 +29,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
     RPC `payer_frais_fixe` / `annuler_paiement_frais_fixe` ; la table documents accepte la police d'assurance (v0.8.6).
 12. `supabase/012_modifier_bail.sql` — RPC `modifier_bail` (corriger tous les détails d'un bail) et
     `creer_bail_en_remplacement` (termine le bail en cours, puis crée le nouveau) ; `documents.deleted_at` (v0.8.7).
+13. `supabase/013_notifications.sql` — centre de notifications : tables `notifications`, `notifications_exclusions`
+    (préférences), `abonnements_push` (téléphones) ; fonctions `alertes_du_jour()` et `generer_notifications()` (v0.8.9).
 
 ## 2. Lancer en local
 
@@ -47,12 +49,43 @@ Pour tester la caméra sur l'iPhone, il faut HTTPS : le plus simple est de dépl
 3. Ajouter les variables `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 4. Deploy. Sur l'iPhone : ouvrir l'URL dans Safari > Partager > « Sur l'écran d'accueil ».
 
+### Notifications poussées (v0.8.9)
+
+Sans cette configuration, le centre de notifications (cloche) fonctionne quand même ; seul l'envoi au téléphone manque.
+
+1. Générer une paire de clés VAPID, **une seule fois** : `npx web-push generate-vapid-keys`.
+2. Vercel > Settings > Environment Variables (Production), puis redéployer :
+
+| Variable | Valeur |
+| --- | --- |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | clé publique (Public Key) |
+| `VAPID_PRIVATE_KEY` | clé privée (Private Key) — secrète |
+| `VAPID_SUJET` | `mailto:` + un courriel de contact |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase > Project Settings > API > `service_role` — secrète, jamais `NEXT_PUBLIC_` |
+| `CRON_SECRET` | une phrase au hasard (ex. `openssl rand -hex 32`) |
+
+3. `vercel.json` programme `GET /api/notifications/envoyer` chaque jour à 12 h UTC (8 h l'été, 7 h l'hiver au Québec).
+   Vercel envoie `Authorization: Bearer <CRON_SECRET>` ; la route calcule les alertes (`generer_notifications`)
+   puis les pousse. Vérifier dans Vercel > Settings > Cron Jobs.
+4. Ne pas changer les clés VAPID ensuite : les téléphones déjà abonnés devraient réactiver les notifications.
+5. iPhone : iOS 16.4 ou plus, app ouverte **depuis l'icône de l'écran d'accueil** ; Préférences des notifications
+   (en bas du tiroir de la cloche) > « Activer les notifications » ; iOS demande la permission.
+
 ## Structure
 
 | Fichier | Rôle |
 | --- | --- |
 | `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Baux · Frais fixes · Dépenses · Véhicule |
-| `components/EnTete.tsx` | En-tête fixe : « Immeubles So-Max », cloche (tiroir de notifications), avatar → Profil |
+| `components/EnTete.tsx` | En-tête fixe : « Immeubles So-Max », cloche (jaune-orangé s'il y a des non lues), avatar → Profil |
+| `components/TiroirNotifications.tsx` | Tiroir de la cloche : notifications du plus récent au plus ancien, lue / non lue, « Préférences des notifications » |
+| `components/PreferencesNotifications.tsx` | Préférences : chaque type du catalogue, oui / non, puis par immeuble ou par véhicule |
+| `components/ActivationPush.tsx` | « Sur ce téléphone » : activer ou désactiver les notifications poussées |
+| `app/profil/notifications/page.tsx` | Profil > Tester les notifications possibles : un exemple de chaque type |
+| `lib/notifications.ts` | **Catalogue des notifications** (code, nom, moment, portée, exemple), lecture, comptage, calcul à l'ouverture |
+| `lib/push.ts` | Web Push côté téléphone : service worker, permission, abonnement (table `abonnements_push`) |
+| `app/api/notifications/envoyer/route.ts` | Serveur : GET (Vercel Cron) calcule et pousse à tous ; POST pousse les tests de la personne connectée |
+| `public/sw.js` | Service worker : affiche la notification poussée ; la toucher ouvre l'app à l'accueil (sans la marquer lue) |
+| `vercel.json` | Cron quotidien des notifications |
 | `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (immeubles, ajout, vendus) |
 | `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente |
 | `app/frais-fixes/page.tsx` | Frais fixes : une carte par immeuble (Hypothèque, Assurances, Taxes), sélecteur d'année, totaux |
@@ -209,7 +242,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 ## En-tête, navigation et Profil (v0.8.5)
 
 - En-tête vert fixe sur toutes les pages sauf la connexion : « Immeubles So-Max » à gauche,
-  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (alertes en v0.8.9).
+  cloche puis avatar (initiales) à droite. La cloche ouvre le tiroir de notifications (v0.8.9).
 - Onglets du bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
 - La déconnexion est dans le Profil (retirée de la page Dépenses).
 - Profil > Mon compte : nom et cellulaire gardés dans le compte Supabase (`user_metadata`) ;
@@ -268,6 +301,37 @@ dossier_depenses_2026-01-01_2026-12-31.zip
   le 30 novembre). « Oui » appelle `creer_bail_en_remplacement` : `terminer_bail` + `creer_bail` dans une seule transaction
   (refusé s'il y a des paiements après cette date ; rien n'est enregistré). « Non » n'enregistre rien.
 
+## Centre de notifications (v0.8.9)
+
+- **Cloche** : jaune-orangé (`--notif`, #f5a623) tant qu'il reste au moins une notification non lue.
+- **Tiroir** : les notifications de la personne connectée, de la plus récente à la plus ancienne. Chacune a un **titre**
+  (l'action à faire), une **description** (ce qu'il faut faire) et, en petit dans le coin, la date de réception
+  (« 12 octobre 2026 »). Non lue = contour jaune-orangé. Toucher une notification la marque lue (contour normal) ;
+  toucher une notification lue la remet non lue. « Tout marquer comme lu » au besoin.
+- **Préférences des notifications** (bouton discret en bas du tiroir) : activer l'envoi sur ce téléphone, puis pour chaque type :
+  recevoir ou non, et immeuble par immeuble (ou véhicule par véhicule). Une exclusion empêche la création de la notification
+  (table `notifications_exclusions`, `cible_id` vide = tout le type). Chacun a ses propres préférences et ses propres lues / non lues.
+- **Profil > Tester les notifications possibles** : « Envoyer » crée un exemple (non lu, mention « test ») et le pousse
+  sur le téléphone ; les préférences s'appliquent (un type exclu n'est pas envoyé). « Retirer les notifications de test du centre ».
+- **Calcul** : `alertes_du_jour()` (SQL) liste les alertes du jour ; `generer_notifications()` les crée pour chaque compte,
+  sauf exclusions, une seule fois chacune (colonne `cle`). Appelée chaque matin par Vercel Cron, et à l'ouverture de l'app
+  (au plus une fois l'heure par téléphone) pour que la cloche soit à jour même sans Cron.
+- **Notification poussée** (iPhone, app sur l'écran d'accueil) : titre + description. La toucher ouvre l'app à l'accueil ;
+  elle reste non lue dans le centre. Une notification déjà lue dans l'app n'est pas poussée.
+
+| Code | Titre | Quand | Préférence par |
+| --- | --- | --- | --- |
+| `hypotheque_renouvellement` | Renouveler l'hypothèque · immeuble | 120, 60, 30 jours avant la fin du terme (prêt pas renouvelé) | immeuble |
+| `assurance_renouvellement` | Renouveler l'assurance · immeuble | 30 et 7 jours avant le renouvellement (police pas renouvelée) | immeuble |
+| `taxes_echeance` | Payer les taxes / Taxes en retard · immeuble | 14 et 3 jours avant l'échéance, puis une fois en retard | immeuble |
+| `avis_tal` | Envoyer l'avis de renouvellement · immeuble logement | ouverture de la fenêtre d'avis, puis 14 jours avant sa fin | immeuble |
+| `loyer_retard` | Loyer en retard · immeuble logement | 5 jours de retard (rien au-delà de 35 jours : vieux baux entrés après coup) | immeuble |
+| `vehicule_compteur` | Entrer le compteur · véhicule | 24 déc. au 10 janv., sans relevé du 15 déc. au 15 janv. | véhicule |
+
+**Règle pour toute nouvelle notification** : titre (l'action) + description (ce qu'il faut faire). L'ajouter
+1) au `CATALOGUE` de `lib/notifications.ts` (elle apparaît alors dans « Tester les notifications possibles » et dans les
+préférences) et 2) dans `alertes_du_jour()` par une nouvelle migration, avec le même code et la même portée.
+
 ## Thème
 
 - Vert `#1b4d34` (icône et barre d'état) ; mode sombre `#7cc49a`. Contrastes du texte ≥ 7:1.
@@ -295,7 +359,6 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Prochaines étapes
 
-1. v0.8.9 : centre de notifications (rappels de refinancement, assurances, taxes, avis TAL).
-2. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
-3. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
-4. v1.0 : rapport annuel par immeuble (revenus + dépenses + intérêts hypothécaires de Frais fixes), format T776 / TP-128.
+1. v0.8.x : chèques postdatés, prélèvements, chèques sans provision, reçu pour comptant.
+2. v0.9 : renouvellements TAL (envoi, réponse, preuve) et logements vacants.
+3. v1.0 : rapport annuel par immeuble (revenus + dépenses + intérêts hypothécaires de Frais fixes), format T776 / TP-128.

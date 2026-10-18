@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.8**.
+> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.9**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -29,7 +29,8 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7).
 4. **Véhicule** 🚗 : journal de bord (km), trajets fréquents composés de lieux, frais du véhicule, relevés du compteur, prorata déductible par immeuble, export.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
-6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs (ajout d'immeuble, logements, vente).
+6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs (ajout d'immeuble, logements, vente) ; en bas, « Tester les notifications possibles » (v0.8.9).
+7. **Notifications** 🔔 (v0.8.9) : cloche jaune-orangé s'il y a du non lu ; tiroir (plus récent en haut, contour jaune-orangé = non lue, toucher = lue / non lue) ; préférences par type et par immeuble ou véhicule ; notifications poussées sur l'iPhone (Web Push, app sur l'écran d'accueil).
 
 ---
 
@@ -42,7 +43,9 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 | Exports | ExcelJS et JSZip, **chargés seulement au clic** (`import()` dynamique) |
 | Hébergement | Vercel, déploiement automatique depuis la branche **`main`** |
 | Projet Supabase | « Gestion des immeubles » (compte de Loïc) |
-| Variables | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (voir `.env.local.example`) |
+| Variables | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` ; notifications poussées (v0.8.9) : `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUJET`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET` (voir `.env.local.example` et README) |
+| Tâche quotidienne | Vercel Cron (`vercel.json`) : `GET /api/notifications/envoyer` à 12 h UTC (calcule et pousse les notifications) |
+| Notifications poussées | Web Push (`web-push` côté serveur, `public/sw.js` côté téléphone). iPhone : iOS 16.4+, app ajoutée à l'écran d'accueil |
 
 **Sécurité**
 - Inscriptions publiques **désactivées** ; les comptes sont créés à la main dans Supabase.
@@ -83,8 +86,9 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 010 | `010_profil_actifs.sql` | `immeubles` : valeur d'achat, date et prix de vente (v0.8.5) | **à confirmer** |
 | 011 | `011_frais_fixes.sql` | `hypotheques`, `hypotheque_releves`, `assurances`, `taxes_versements` ; `documents.bail_id` facultatif + type `assurance` ; RPC `payer_frais_fixe`, `annuler_paiement_frais_fixe` (v0.8.6) | **à confirmer** |
 | 012 | `012_modifier_bail.sql` | `documents.deleted_at` ; RPC `modifier_bail`, `creer_bail_en_remplacement` (v0.8.7) | **à exécuter** |
+| 013 | `013_notifications.sql` | `notifications` (lue_le, poussee_le, cle unique), `notifications_exclusions`, `abonnements_push` (RLS : chacun ses lignes) ; `alertes_du_jour()`, `generer_notifications()` ; aides `date_fr`, `cents_fr`, `de_mois_fr` (v0.8.9) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `013_notifications.sql`.
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `014_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
@@ -103,7 +107,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 ## 4. Carte des fichiers
 
-**Attention : il y a 15 fichiers `page.tsx`.** Ne jamais se fier au nom du fichier seul ; chacun se reconnaît
+**Attention : il y a 16 fichiers `page.tsx`.** Ne jamais se fier au nom du fichier seul ; chacun se reconnaît
 à sa ligne `export default function` :
 
 | Chemin | Écran | `export default function` |
@@ -123,13 +127,19 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `app/frais-fixes/page.tsx` | onglet **Frais fixes** | `PageFraisFixes` |
 | `app/profil/page.tsx` | Profil et Actifs | `PageProfil` |
 | `app/profil/immeubles/[id]/page.tsx` | détail d'un immeuble | `PageDetailImmeuble` |
+| `app/profil/notifications/page.tsx` | Tester les notifications possibles (v0.8.9) | `PageTestNotifications` |
 
 **Composants et bibliothèques**
 
 | Fichier | Rôle |
 | --- | --- |
 | `components/BarreOnglets.tsx` | barre d'onglets du bas (Loyers · Baux · Frais fixes · Dépenses · Véhicule) |
-| `components/EnTete.tsx` | en-tête fixe : nom de l'app, cloche (tiroir de notifications, vide jusqu'à 0.8.9), avatar → Profil |
+| `components/EnTete.tsx` | en-tête fixe : nom de l'app, cloche (jaune-orangé si non lues ; compte au retour dans l'app et après un test), avatar → Profil |
+| `components/TiroirNotifications.tsx`, `PreferencesNotifications.tsx`, `ActivationPush.tsx` | tiroir de la cloche, préférences, « Sur ce téléphone » (v0.8.9) |
+| `lib/notifications.ts` | **catalogue des notifications** (code, nom, moment, portée immeuble / véhicule, exemple) + lecture et comptage |
+| `lib/push.ts` | Web Push côté téléphone (service worker, permission, abonnement) |
+| `app/api/notifications/envoyer/route.ts` | seule route serveur : GET = Vercel Cron (calcul + envoi à tous), POST = envoi des tests de la personne connectée |
+| `public/sw.js` | service worker : affiche la notification ; la toucher ouvre `/` sans la marquer lue |
 | `components/FeuillePret.tsx`, `FeuilleReleve.tsx`, `FeuilleAssurance.tsx`, `FeuilleTaxes.tsx`, `FeuillePaiement.tsx` | feuilles (formulaires du bas) de la page Frais fixes |
 | `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels |
 | `lib/fraisFixes.ts` | types Frais fixes, intérêts de l'année (relevé prioritaire), statut des versements, totaux |
@@ -179,9 +189,17 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 ## 6. Façon de travailler (important)
 
+**Notifications : règle pour toute nouvelle notification (demande de Maxime, v0.8.9)**
+- Toujours **titre** (l'action à faire) + **description** (ce que l'utilisateur doit faire).
+- L'ajouter au `CATALOGUE` de `lib/notifications.ts` : elle apparaît alors automatiquement dans Profil >
+  « Tester les notifications possibles » et dans « Préférences des notifications » (exclusion par type et par immeuble / véhicule).
+- Le calcul va dans `alertes_du_jour()` (nouvelle migration, même code, `cible_id` = immeuble ou véhicule visé,
+  `cle` unique pour ne jamais la créer deux fois). Les préférences sont appliquées par `generer_notifications()`.
+- Une notification poussée sur iOS contient le titre et la description ; la toucher ouvre l'app à l'accueil et ne la marque pas lue.
+
 **Livraison des mises à jour**
 - Claude ne peut pas toujours installer les paquets npm ni compiler l'app : **Loïc compile et déploie**.
-  (Les v0.8.6, v0.8.7 et v0.8.8 ont été compilées avec succès par Claude, `npm run build`, avant la livraison.)
+  (Les v0.8.6 à v0.8.9 ont été compilées avec succès par Claude, `npm run build`, avant la livraison.)
   Claude vérifie la syntaxe TypeScript, teste le SQL sur une copie locale et les calculs avec Node.
 - Chaque mise à jour est livrée en **ZIP avec les fichiers déjà rangés dans leurs dossiers** et un
   `LISEZMOI_MISE_A_JOUR.txt` : quels fichiers, quel SQL, dans quel ordre. Loïc décompresse **à la racine du projet**
@@ -218,10 +236,11 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
   « Modifier le bail » (v0.8.7) corrige les extras sur tous les mois.
 - (Fait en 0.8.7 : modification des coordonnées des locataires, via « Modifier le bail ».)
 
+**À faire par Loïc (v0.8.9)**
+- Exécuter `013_notifications.sql`, faire `npm install` (nouvelle dépendance `web-push`), puis configurer les 5 variables
+  des notifications poussées dans Vercel (README > « Notifications poussées »). Sans elles, la cloche fonctionne mais rien n'arrive sur le téléphone.
+
 **Feuille de route**
-0. **v0.8.9** : centre de notifications (tiroir de la cloche) : fin de terme hypothécaire (120, 60, 30 jours), assurances (30, 7 jours),
-   taxes (14, 3 jours), avis TAL ; table `notifications` + calcul quotidien `pg_cron` (migration 013). Les dates sont déjà dans
-   `hypotheques.fin_terme`, `assurances.date_renouvellement`, `taxes_versements.echeance` (non payés).
 1. **v0.8.x** : série de chèques postdatés en un geste, confirmation des prélèvements, chèques sans provision, reçu pour paiement comptant.
 2. **v0.9** : renouvellements TAL (envoi de l'avis, réponse du locataire, preuve) et suivi des logements vacants.
 3. **v1.0** : rapport annuel par immeuble (revenus bruts, crédits, dépenses par ligne T776 / TP-128, véhicule, intérêts hypothécaires via `lib/fraisFixes.ts`), prêt pour le comptable.
