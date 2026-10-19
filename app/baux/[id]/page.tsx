@@ -1,13 +1,14 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { supabase, BUCKET_RECUS } from "@/lib/supabase";
-import { preparerFichier } from "@/lib/image";
+import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
+import { DOCUMENTS_BAIL } from "@/lib/documents";
+import DocumentsBail from "@/components/DocumentsBail";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible, lendemain, finDuMois } from "@/lib/dates";
+import { aujourdhuiIso, dateLisible, moisLisible, lendemain, finDuMois, finApresMois } from "@/lib/dates";
 
 type Bail = {
   id: string;
@@ -31,7 +32,6 @@ type Bail = {
 };
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
-type DocumentBail = { id: string; storage_key: string; mime_type: string; date_document: string | null; created_at: string; url: string | null };
 type Solde = { echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
 type Changement = { id: string; date_effet: string; ancien_loyer_cents: number; nouveau_loyer_cents: number; raison: string | null; created_at: string };
 type FinBail = { date_depart: string; forfait_cents: number; raison: string | null };
@@ -52,11 +52,9 @@ export default function DetailBail() {
   const [soldes, setSoldes] = useState<Solde[]>([]);
   const [erreur, setErreur] = useState<string | null>(null);
   const [suppression, setSuppression] = useState(false);
-  const [documents, setDocuments] = useState<DocumentBail[]>([]);
-  const [televersement, setTeleversement] = useState<string | null>(null);
   const [changements, setChangements] = useState<Changement[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
-  // Formulaire « Changer le loyer »
+  // Formulaire « Modifier le prix du loyer »
   const [changementOuvert, setChangementOuvert] = useState(false);
   const [nouveauLoyer, setNouveauLoyer] = useState("");
   const [moisEffet, setMoisEffet] = useState("");
@@ -70,61 +68,12 @@ export default function DetailBail() {
   const [forfait, setForfait] = useState("");
   const [raisonFin, setRaisonFin] = useState("");
   const [envoiFin, setEnvoiFin] = useState(false);
-  const champPhoto = useRef<HTMLInputElement>(null);
-  const champFichier = useRef<HTMLInputElement>(null);
-
-  const chargerDocuments = useCallback(async () => {
-    if (!id) return;
-    const { data } = await supabase
-      .from("documents")
-      .select("id, storage_key, mime_type, date_document, created_at")
-      .eq("bail_id", id)
-      .eq("type", "bail")
-      .is("deleted_at", null)
-      .order("created_at");
-    const liste = (data ?? []) as Omit<DocumentBail, "url">[];
-    const urls = liste.length
-      ? (await supabase.storage.from(BUCKET_RECUS).createSignedUrls(liste.map((d) => d.storage_key), 600)).data ?? []
-      : [];
-    setDocuments(liste.map((d) => ({ ...d, url: urls.find((u) => u.path === d.storage_key)?.signedUrl ?? null })));
-  }, [id]);
-
-  async function ajouterDocuments(fichiers: FileList | null) {
-    if (!fichiers || fichiers.length === 0 || !id) return;
-    setErreur(null);
-    try {
-      const liste = Array.from(fichiers);
-      for (let i = 0; i < liste.length; i++) {
-        setTeleversement(`Envoi ${i + 1} / ${liste.length}…`);
-        const f = await preparerFichier(liste[i]);
-        const maintenant = new Date();
-        const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
-        const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
-        const envoi = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
-        if (envoi.error) throw new Error(`Envoi impossible : ${envoi.error.message}`);
-        const { error } = await supabase.from("documents").insert({
-          bail_id: id, type: "bail", storage_key: cle, mime_type: f.mimeType,
-          date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
-        });
-        if (error) throw new Error(error.message);
-      }
-      await chargerDocuments();
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTeleversement(null);
-      if (champPhoto.current) champPhoto.current.value = "";
-      if (champFichier.current) champFichier.current.value = "";
-    }
-  }
-
-  async function retirerDocument(d: DocumentBail, numero: number) {
-    if (!window.confirm(`Retirer la page ${numero} du bail ? (ajoutée par erreur)`)) return;
-    setErreur(null);
-    const { error } = await supabase.from("documents").update({ deleted_at: new Date().toISOString() }).eq("id", d.id);
-    if (error) return setErreur(error.message);
-    await chargerDocuments();
-  }
+  // Renouveler le bail (nouveau bail qui suit celui-ci)
+  const [renouvOuvert, setRenouvOuvert] = useState(false);
+  const [renouvLoyer, setRenouvLoyer] = useState("");
+  const [renouvDebut, setRenouvDebut] = useState("");
+  const [renouvMois, setRenouvMois] = useState("12");
+  const [envoiRenouv, setEnvoiRenouv] = useState(false);
 
   const charger = useCallback(async () => {
     if (!id) return;
@@ -158,9 +107,8 @@ export default function DetailBail() {
           .eq("mode", "credit").is("deleted_at", null);
         setCredits((cr ?? []) as Credit[]);
       }
-      await chargerDocuments();
     }
-  }, [id, chargerDocuments]);
+  }, [id]);
 
   useEffect(() => {
     if (session && id) charger();
@@ -174,6 +122,39 @@ export default function DetailBail() {
     setNouveauLoyer(bail ? centsVersSaisie(bail.loyer_cents) : "");
     setRaison("");
     setChangementOuvert(true);
+  }
+
+  function ouvrirRenouvellement() {
+    if (!bail?.date_fin) return;
+    // Prix par défaut : le loyer du dernier mois du bail (hausses comprises)
+    setRenouvLoyer(centsVersSaisie(soldes[soldes.length - 1]?.loyer_cents ?? bail.loyer_cents));
+    setRenouvDebut(lendemain(bail.date_fin));
+    setRenouvMois("12");
+    setRenouvOuvert(true);
+  }
+
+  async function enregistrerRenouvellement() {
+    if (!bail) return;
+    const cents = versCents(renouvLoyer);
+    if (cents === null || cents < 0) return setErreur("Entre le prix du nouveau loyer (ex. 975,00).");
+    if (!renouvDebut) return setErreur("Entre la date de début du nouveau bail.");
+    const mois = Number(renouvMois);
+    if (!Number.isInteger(mois) || mois < 1 || mois > 120) return setErreur("Entre une durée en mois (ex. 12).");
+    const finNouveau = finApresMois(renouvDebut, mois);
+    if (!window.confirm(
+      `Nouveau bail du ${dateLisible(renouvDebut)} au ${dateLisible(finNouveau)} à ${formatCents(cents)} par mois` +
+      (bail.extras_cents ? ` (plus ${formatCents(bail.extras_cents)} d'extras et crédits, gardés)` : "") +
+      ". Mêmes locataires, même mode et même jour de paiement."
+    )) return;
+    setErreur(null);
+    setEnvoiRenouv(true);
+    const { data: nouveauId, error } = await supabase.rpc("renouveler_bail", {
+      p_bail: bail.id, p_date_debut: renouvDebut, p_date_fin: finNouveau, p_loyer_cents: cents,
+    });
+    setEnvoiRenouv(false);
+    if (error) return setErreur(error.message);
+    setRenouvOuvert(false);
+    router.push(`/baux/${nouveauId}`);
   }
 
   function ouvrirFin() {
@@ -352,7 +333,7 @@ export default function DetailBail() {
             </dl>
 
             {bail.statut !== "termine" && !bail.date_depart && moisFuturs.length > 0 && !changementOuvert && (
-              <button className="bouton plein" style={{ marginTop: 12 }} onClick={ouvrirChangement}>Changer le loyer</button>
+              <button className="bouton plein" style={{ marginTop: 12 }} onClick={ouvrirChangement}>Modifier le prix du loyer</button>
             )}
             {changementOuvert && (
               <div className="bloc-locataire">
@@ -384,6 +365,58 @@ export default function DetailBail() {
               </div>
             )}
           </section>
+
+          {/* Renouvellement : le bail qui suit celui-ci, s'il existe */}
+          {(() => {
+            if (bail.statut !== "actif" || bail.date_depart || !bail.date_fin) return null;
+            const suivant = autresBaux
+              .filter((a) => a.date_debut > (bail.date_fin ?? ""))
+              .sort((x, y) => x.date_debut.localeCompare(y.date_debut))[0];
+            if (suivant) {
+              return (
+                <section className="carte">
+                  <strong>Bail renouvelé</strong>
+                  <p className="aide">
+                    Le bail suivant commence le {dateLisible(suivant.date_debut)}
+                    {suivant.date_fin ? ` et se termine le ${dateLisible(suivant.date_fin)}` : ""}.
+                  </p>
+                  <Link className="bouton plein" style={{ textAlign: "center" }} href={`/baux/${suivant.id}`}>Voir le nouveau bail</Link>
+                </section>
+              );
+            }
+            const finNouveau = renouvDebut && Number(renouvMois) >= 1 ? finApresMois(renouvDebut, Number(renouvMois)) : null;
+            return (
+              <section className="carte">
+                {!renouvOuvert ? (
+                  <button className="bouton principal plein" onClick={ouvrirRenouvellement}>Renouveler le bail</button>
+                ) : (
+                  <>
+                    <strong>Renouveler le bail</strong>
+                    <label htmlFor="renouv-loyer">Prix du nouveau loyer par mois (sans les extras)</label>
+                    <input id="renouv-loyer" className="montant-total" inputMode="decimal" value={renouvLoyer}
+                           onChange={(e) => setRenouvLoyer(e.target.value)} />
+                    <label htmlFor="renouv-debut">Début</label>
+                    <input id="renouv-debut" type="date" value={renouvDebut} min={lendemain(bail.date_fin)}
+                           onChange={(e) => setRenouvDebut(e.target.value)} />
+                    <label htmlFor="renouv-mois">Durée (mois)</label>
+                    <input id="renouv-mois" inputMode="numeric" value={renouvMois}
+                           onChange={(e) => setRenouvMois(e.target.value.replace(/\D/g, ""))} />
+                    <p className="aide">
+                      {finNouveau ? `Fin du nouveau bail : ${dateLisible(finNouveau)}. ` : ""}
+                      Mêmes locataires, extras et crédits, mode et jour de paiement. Le bail actuel n&apos;est pas touché.
+                      Pour changer autre chose, touche « Modifier le bail » sur le nouveau bail.
+                    </p>
+                    <div className="rangee">
+                      <button className="bouton" onClick={() => setRenouvOuvert(false)} disabled={envoiRenouv}>Annuler</button>
+                      <button className="bouton principal" onClick={enregistrerRenouvellement} disabled={envoiRenouv}>
+                        {envoiRenouv ? "Enregistrement…" : "Renouveler"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </section>
+            );
+          })()}
 
           {/* Départ du locataire */}
           {bail.date_depart ? (
@@ -436,33 +469,8 @@ export default function DetailBail() {
             </section>
           )}
 
-          <section className="carte">
-            <strong>Bail signé</strong>
-            <p className="aide">Photo ou PDF du bail, pour le dossier du prêteur et les renouvellements.</p>
-            <div className="rangee">
-              <button className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={televersement !== null}>
-                {televersement ?? (documents.length ? "+ Page" : "Photo du bail")}
-              </button>
-              <button className="bouton" onClick={() => champFichier.current?.click()} disabled={televersement !== null}>
-                Fichier ou PDF
-              </button>
-            </div>
-            <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterDocuments(e.target.files)} />
-            <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterDocuments(e.target.files)} />
-            {documents.length > 0 && (
-              <div className="photos">
-                {documents.map((d, i) => (
-                  <div key={d.id} className="vignette" role="button" tabIndex={0} style={{ cursor: "pointer" }}
-                       onClick={() => d.url && window.open(d.url, "_blank")}>
-                    {d.mime_type === "application/pdf" || !d.url ? "PDF" : <img src={d.url} alt={`Bail, page ${i + 1}`} />}
-                    <button type="button" aria-label={`Retirer la page ${i + 1}`}
-                            onClick={(e) => { e.stopPropagation(); retirerDocument(d, i + 1); }}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {documents.length > 0 && <p className="aide">{documents.length} page{documents.length > 1 ? "s" : ""} · toucher pour ouvrir, × pour retirer une page ajoutée par erreur.</p>}
-          </section>
+          {/* Bail signé, enquête de crédit, règlements d'immeuble (v0.9.4) */}
+          {DOCUMENTS_BAIL.map((d) => <DocumentsBail key={d.type} bailId={id} type={d.type} setErreur={setErreur} />)}
 
           {bail.avis_du && !bail.date_depart && (
             <section className="carte">

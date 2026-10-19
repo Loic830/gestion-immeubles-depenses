@@ -196,6 +196,12 @@ details summary { font-weight: 600; cursor: pointer; padding: 4px 0; color: var(
 
 .total-periode { font-size: 15px; color: var(--discret); }
 .total-periode strong { color: var(--texte); font-size: 20px; }
+/* Montant du haut de Dépenses : le toucher affiche le graphique (v0.9.4) */
+.montant-touchable {
+  border: none; background: none; padding: 0; font: inherit; cursor: pointer;
+  color: var(--accent); font-size: 20px; font-weight: 700;
+  text-decoration: underline dotted; text-underline-offset: 4px;
+}
 
 /* iOS Safari : le champ date ignore width:100% et déborde de la carte */
 input[type="date"] {

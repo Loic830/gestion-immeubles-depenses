@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.9.3 : onglet Baux — filtre par logement (sous l'immeuble choisi) et par état des baux (actifs, à venir, renouvelés, départ prévu, relocation faite, terminés) ; « Renouveler le bail » sur la fiche d'un bail actif (prix, début le lendemain de la fin, 12 mois par défaut) ; « Changer le loyer » devient « Modifier le prix du loyer ». 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.4 : Nouveau bail — exemple « stationnement » pour les extras, question « Il y a des mois passés… voulez-vous les marquer comme payés ? » si la case n'est pas cochée, alerte si aucune photo du bail, sections photos « Enquête de crédit » et « Règlements d'immeuble » (aussi sur la fiche du bail) ; Dépenses — la liste du mois d'abord, toucher le montant du haut affiche le graphique ; Loyers — l'encadré du haut (total et par immeuble) montre les dépôts faits. 0.9.3 : onglet Baux — filtre par logement (sous l'immeuble choisi) et par état des baux (actifs, à venir, renouvelés, départ prévu, relocation faite, terminés) ; « Renouveler le bail » sur la fiche d'un bail actif (prix, début le lendemain de la fin, 12 mois par défaut) ; « Changer le loyer » devient « Modifier le prix du loyer ». 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -38,6 +38,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
     inscrits « reçus » au mode du bail, datés du jour d'échéance, dans la même transaction) (v0.9.1).
 16. `supabase/016_renouveler_bail.sql` — RPC `renouveler_bail(bail, début, fin, loyer)` : nouveau bail qui suit l'ancien
     (mêmes locataires, extras, mode, jour, inclusions ; `bail_precedent_id`) ; `alertes_du_jour` : plus d'avis TAL pour un bail renouvelé (v0.9.3).
+17. `supabase/017_documents_bail.sql` — types de documents `enquete_credit` et `reglements` (photos de l'enquête de crédit
+    et des règlements d'immeuble d'un bail) (v0.9.4).
 
 ## 2. Lancer en local
 
@@ -114,7 +116,9 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus ; « Modifier le bail », « Historique » |
 | `app/baux/[id]/modifier/page.tsx` | Modifier le bail : tous les détails (RPC modifier_bail) |
 | `app/baux/logement/[id]/page.tsx` | Historique de tous les baux d'un logement |
-| `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail |
+| `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail ; questions avant d'enregistrer (mois passés, bail sans photo) et photos des 3 documents (v0.9.4) |
+| `components/DocumentsBail.tsx` | Fiche du bail : une section de documents (bail signé, enquête de crédit, règlements d'immeuble) (v0.9.4) |
+| `lib/documents.ts` | Types de documents d'un bail (`DOCUMENTS_BAIL`) et envoi d'un fichier (`televerserDocument`) (v0.9.4) |
 | `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; états des baux pour le filtre (v0.9.3) |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble et par période : etat_des_loyers.xlsx (un bail par ligne, loyers dus et reçus de la période, onglet « Par année ») + dossier baux/ |
 | `app/vehicule/page.tsx` | Onglet Véhicules : flèches ‹ › entre les véhicules, trajets (fréquents, motif), frais (reçu), compteur, résumé du prorata |
@@ -401,6 +405,23 @@ préférences) et 2) dans `alertes_du_jour()` par une nouvelle migration, avec l
   Refusé si le début n'est pas après la fin du bail actuel ou si un autre bail occupe les dates. Une fois renouvelé, la fiche
   montre « Bail renouvelé » avec un lien vers le nouveau bail, et la notification d'avis TAL s'arrête.
 - « Changer le loyer » s'appelle maintenant **« Modifier le prix du loyer »** (même fonction).
+
+## Nouveau bail, Dépenses et Loyers (v0.9.4)
+
+- **Nouveau bail — extras** : le bouton s'appelle « + Ajouter un extra (ex. stationnement) ».
+- **Nouveau bail — mois passés** : si le bail a des mois passés (même règle que la case, `moisEchus`) et que la case
+  « Tous les mois passés sont payés » n'est pas cochée, « Enregistrer » ouvre la question « Il y a des mois passés dans ce bail.
+  Voulez-vous les marquer comme payés ? ». Oui = tous les mois passés sont marqués payés (comme la case) ; Non = ils restent à payer.
+- **Nouveau bail — photos** : sans aucune photo du bail signé, « Enregistrer » demande « Vous n'avez pas entré les photos du bail,
+  voulez-vous enregistrer ? ». Non = retour au formulaire. (La question des mois passés vient d'abord.)
+- **Enquête de crédit et Règlements d'immeuble** : deux sections de plus, comme « Bail signé » (photo ou PDF, plusieurs pages),
+  dans Nouveau bail et sur la fiche du bail (toucher pour ouvrir, × pour retirer). Table `documents`, types `enquete_credit`
+  et `reglements` (migration 017), fichiers dans `baux/AAAA/MM/`. Le dossier du prêteur garde seulement le bail signé.
+- **Dépenses** : par défaut, le mois courant avec la liste ; le graphique est caché. Toucher le montant du haut (souligné)
+  affiche l'anneau et les barres ; « Cacher le graphique » ou retoucher le montant les cache. Boutons Mois / Année inchangés.
+- **Loyers** : l'encadré du haut montre les **dépôts faits** pour les loyers du mois affiché (paiements reçus, sans les crédits
+  au locataire ni les chèques encore en main), sur le total dû ; les crédits et le reste à recevoir sont en petit dessous.
+  Toucher = dépôts par immeuble.
 
 ## Thème
 

@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { versCents, formatCents, centsVersSaisie } from "@/lib/argent";
 import { finApresMois, triNumero, dateLisible, moisEchus, moisLisible } from "@/lib/dates";
+import { DOCUMENTS_BAIL, aucunePage, type PagesParType, type TypeDocumentBail } from "@/lib/documents";
 
 // Formulaire partagé : Nouveau bail et Modifier le bail.
 // Il valide la saisie et prépare le paramètre « p » des fonctions creer_bail,
@@ -85,7 +86,7 @@ type Props = {
   texteBouton: string;
   envoi: string | null;
   setErreur: (m: string | null) => void;
-  onEnregistrer: (p: BailSaisi, pages: FichierPrepare[]) => void;
+  onEnregistrer: (p: BailSaisi, pages: PagesParType) => void;
 };
 
 export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPhotos, nouveau, texteBouton, envoi, setErreur, onEnregistrer }: Props) {
@@ -109,10 +110,11 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
   const [moisExclus, setMoisExclus] = useState<string[]>([]);
   const [dernierBail, setDernierBail] = useState<DernierBail | null>(null);
 
-  const [pages, setPages] = useState<FichierPrepare[]>([]);
+  // Photos du bail signé, de l'enquête de crédit et des règlements d'immeuble
+  const [pages, setPages] = useState<PagesParType>(aucunePage);
   const [traitement, setTraitement] = useState(false);
-  const champPhoto = useRef<HTMLInputElement>(null);
-  const champFichier = useRef<HTMLInputElement>(null);
+  // Questions posées avant d'enregistrer (nouveau bail) : mois passés non cochés, puis bail sans photo
+  const [question, setQuestion] = useState<{ etape: "mois" | "photos"; p: BailSaisi } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -145,29 +147,27 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
   const moisPasses = nouveau ? moisEchus(dateDebut, dateFin || null, Number(jourEcheance) || 1) : [];
   const moisAPayer = moisPayes ? moisPasses.filter((m) => !moisExclus.includes(m)) : [];
 
-  async function ajouterPages(liste: FileList | null) {
+  async function ajouterPages(type: TypeDocumentBail, liste: FileList | null) {
     if (!liste || liste.length === 0) return;
     setErreur(null);
     setTraitement(true);
     try {
       const prepares: FichierPrepare[] = [];
       for (const f of Array.from(liste)) prepares.push(await preparerFichier(f));
-      setPages((avant) => [...avant, ...prepares]);
+      setPages((avant) => ({ ...avant, [type]: [...avant[type], ...prepares] }));
     } catch (e) {
       setErreur(e instanceof Error ? e.message : "Erreur pendant le traitement de la photo.");
     } finally {
       setTraitement(false);
-      if (champPhoto.current) champPhoto.current.value = "";
-      if (champFichier.current) champFichier.current.value = "";
     }
   }
 
-  function retirerPage(i: number) {
+  function retirerPage(type: TypeDocumentBail, i: number) {
     setPages((avant) => {
-      const copie = [...avant];
+      const copie = [...avant[type]];
       const [retiree] = copie.splice(i, 1);
       if (retiree?.apercuUrl) URL.revokeObjectURL(retiree.apercuUrl);
-      return copie;
+      return { ...avant, [type]: copie };
     });
   }
 
@@ -194,7 +194,7 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
     if (ext.some((e) => !e.libelle.trim() || !versCents(e.montantSaisi))) return setErreur("Chaque extra ou crédit a besoin d'un libellé et d'un montant.");
     if (loyerCents + extrasCents < 0) return setErreur("Les crédits dépassent le loyer : le total dû chaque mois ne peut pas être négatif.");
 
-    onEnregistrer({
+    const p: BailSaisi = {
       logement_id: logementId,
       date_debut: dateDebut,
       date_fin: dateFin || null,
@@ -211,7 +211,23 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
           }),
       extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: signe(e) * (versCents(e.montantSaisi) ?? 0) })),
       ...(nouveau ? { mois_payes: moisAPayer } : {}),
-    }, pages);
+    };
+    // Nouveau bail avec des mois passés, case non cochée : on demande
+    if (nouveau && moisPasses.length > 0 && !moisPayes) return setQuestion({ etape: "mois", p });
+    verifierPhotos(p);
+  }
+
+  /** Alerte si aucune photo du bail signé, sinon enregistre */
+  function verifierPhotos(p: BailSaisi) {
+    if (avecPhotos && pages.bail.length === 0) return setQuestion({ etape: "photos", p });
+    setQuestion(null);
+    onEnregistrer(p, pages);
+  }
+
+  function repondreMois(oui: boolean) {
+    if (!question) return;
+    if (oui) { setMoisPayes(true); setMoisExclus([]); }
+    verifierPhotos({ ...question.p, mois_payes: oui ? moisPasses : [] });
   }
 
   const logement = logements.find((l) => l.id === logementId);
@@ -370,7 +386,7 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
         ))}
         <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
                 onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "" }])}>
-          + Ajouter un extra
+          + Ajouter un extra (ex. stationnement)
         </button>
         <button type="button" className="lien-filtres" style={{ marginTop: 0 }}
                 onClick={() => setExtras((a) => [...a, { cle: crypto.randomUUID(), libelle: "", montantSaisi: "", credit: true }])}>
@@ -391,33 +407,12 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
         <input id="jour" inputMode="numeric" value={jourEcheance} onChange={(e) => setJourEcheance(e.target.value.replace(/\D/g, "").slice(0, 2))} />
       </section>
 
-      {/* Copie du bail */}
-      {avecPhotos && (
-        <section className="carte">
-          <strong>Bail signé</strong>
-          <p className="aide">Facultatif : photographie chaque page du bail, ou joins le PDF. Tu pourras aussi le faire plus tard depuis la fiche.</p>
-          <div className="rangee">
-            <button type="button" className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={traitement}>
-              {traitement ? "Traitement…" : pages.length ? "+ Page" : "Photo du bail"}
-            </button>
-            <button type="button" className="bouton" onClick={() => champFichier.current?.click()} disabled={traitement}>
-              Fichier ou PDF
-            </button>
-          </div>
-          <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouterPages(e.target.files)} />
-          <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouterPages(e.target.files)} />
-          {pages.length > 0 && (
-            <div className="photos">
-              {pages.map((p, i) => (
-                <div className="vignette" key={i}>
-                  {p.apercuUrl ? <img src={p.apercuUrl} alt={`Bail, page ${i + 1}`} /> : "PDF"}
-                  <button type="button" onClick={() => retirerPage(i)} aria-label="Retirer">×</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      {/* Bail signé, enquête de crédit, règlements d'immeuble */}
+      {avecPhotos && DOCUMENTS_BAIL.map((d) => (
+        <SectionPhotos key={d.type} titre={d.titre} aide={d.aideNouveau} bouton={d.bouton} nomPage={d.nomPage}
+                       pages={pages[d.type]} traitement={traitement}
+                       onAjouter={(liste) => ajouterPages(d.type, liste)} onRetirer={(i) => retirerPage(d.type, i)} />
+      ))}
 
       {/* Détails */}
       <section className="carte">
@@ -434,6 +429,79 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
           </button>
         </div>
       </div>
+
+      {question && (
+        <div className="voile" role="dialog" aria-modal="true" aria-labelledby="titre-question">
+          <div className="feuille">
+            {question.etape === "mois" ? (
+              <>
+                <strong id="titre-question" style={{ fontSize: 19 }}>Il y a des mois passés dans ce bail</strong>
+                <p>Voulez-vous les marquer comme payés ?</p>
+                <p className="aide">
+                  {moisPasses.length} mois : {moisPasses.map((m) => moisLisible(m)).join(", ")}.
+                  {" "}Si vous répondez Non, ils resteront à payer dans Loyers.
+                </p>
+                <div className="rangee" style={{ marginTop: 12 }}>
+                  <button className="bouton" onClick={() => repondreMois(false)}>Non</button>
+                  <button className="bouton principal" onClick={() => repondreMois(true)}>Oui, payés</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <strong id="titre-question" style={{ fontSize: 19 }}>Pas de photos du bail</strong>
+                <p>Vous n&apos;avez pas entré les photos du bail. Voulez-vous enregistrer ?</p>
+                <p className="aide">Vous pourrez les ajouter plus tard depuis la fiche du bail.</p>
+                <div className="rangee" style={{ marginTop: 12 }}>
+                  <button className="bouton" onClick={() => setQuestion(null)}>Non, ajouter les photos</button>
+                  <button className="bouton principal" onClick={() => { const p = question.p; setQuestion(null); onEnregistrer(p, pages); }}>
+                    Oui, enregistrer
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+/** Une section de photos ou PDF à joindre au nouveau bail (envoyées après l'enregistrement) */
+function SectionPhotos({ titre, aide, bouton, nomPage, pages, traitement, onAjouter, onRetirer }: {
+  titre: string; aide: string; bouton: string; nomPage: string; pages: FichierPrepare[]; traitement: boolean;
+  onAjouter: (liste: FileList | null) => Promise<void>; onRetirer: (i: number) => void;
+}) {
+  const champPhoto = useRef<HTMLInputElement>(null);
+  const champFichier = useRef<HTMLInputElement>(null);
+  async function ajouter(liste: FileList | null) {
+    await onAjouter(liste);
+    if (champPhoto.current) champPhoto.current.value = "";
+    if (champFichier.current) champFichier.current.value = "";
+  }
+  return (
+    <section className="carte">
+      <strong>{titre}</strong>
+      <p className="aide">{aide}</p>
+      <div className="rangee">
+        <button type="button" className="bouton principal" onClick={() => champPhoto.current?.click()} disabled={traitement}>
+          {traitement ? "Traitement…" : pages.length ? "+ Page" : bouton}
+        </button>
+        <button type="button" className="bouton" onClick={() => champFichier.current?.click()} disabled={traitement}>
+          Fichier ou PDF
+        </button>
+      </div>
+      <input ref={champPhoto} type="file" accept="image/*" capture="environment" hidden onChange={(e) => ajouter(e.target.files)} />
+      <input ref={champFichier} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => ajouter(e.target.files)} />
+      {pages.length > 0 && (
+        <div className="photos">
+          {pages.map((p, i) => (
+            <div className="vignette" key={i}>
+              {p.apercuUrl ? <img src={p.apercuUrl} alt={`${nomPage}, page ${i + 1}`} /> : "PDF"}
+              <button type="button" onClick={() => onRetirer(i)} aria-label="Retirer">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

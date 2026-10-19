@@ -75,6 +75,8 @@ function ListeDepenses() {
 
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [chargement, setChargement] = useState(true);
+  // Graphique caché par défaut : toucher le montant du haut l'affiche (v0.9.4)
+  const [graphique, setGraphique] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
   function allerA(periode: string, ids: string[] = choisis) {
@@ -176,17 +178,25 @@ function ListeDepenses() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      {/* Totaux */}
+      {/* Totaux ; toucher le montant = graphique */}
       <section className="carte">
         <div className="total-periode">
           <span style={{ textTransform: "capitalize" }}>{libellePeriode}</span>
-          {nomsChoisis && <> · {nomsChoisis}</>} : <strong>{formatCents(total)}</strong>
+          {nomsChoisis && <> · {nomsChoisis}</>} :{" "}
+          {parCategorie.length > 0
+            ? <button type="button" className="montant-touchable" aria-expanded={graphique} onClick={() => setGraphique(!graphique)}>
+                {formatCents(total)}
+              </button>
+            : <strong>{formatCents(total)}</strong>}
           {nbBrouillons > 0 && <> · <span className="pastille">{nbBrouillons} à compléter</span></>}
         </div>
         {totalCapital > 0 && (
           <p className="aide">Dont {formatCents(totalCapital)} en dépenses en capital (amortissables).</p>
         )}
-        {parCategorie.length > 0 && (
+        {parCategorie.length > 0 && !graphique && (
+          <p className="aide">Touche le montant pour voir le graphique.</p>
+        )}
+        {parCategorie.length > 0 && graphique && (
           <>
             <div className="graphique-haut">
               <Anneau total={total} parts={partsAnneau.map(([, c], i) => ({ valeur: c, couleur: couleur(i) }))}
@@ -200,6 +210,9 @@ function ListeDepenses() {
             <p className="aide" style={{ textAlign: "center", marginTop: 4 }}>
               {mode === "annee" ? "Dépenses par mois" : "Dépenses par semaine du mois (jours)"}
             </p>
+            <button type="button" className="lien-filtres" style={{ margin: "4px auto 0" }} onClick={() => setGraphique(false)}>
+              Cacher le graphique
+            </button>
           </>
         )}
         {lignes.length >= LIMITE && (

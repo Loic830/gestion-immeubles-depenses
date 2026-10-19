@@ -79,6 +79,8 @@ function Loyers() {
   const [logements, setLogements] = useState<Logement[]>([]);
   const [soldesMois, setSoldesMois] = useState<Solde[]>([]);
   const [retards, setRetards] = useState<Solde[]>([]);
+  // Dépôts faits (paiements reçus, sans les crédits ni les chèques en main) par échéance du mois affiché
+  const [depots, setDepots] = useState<Map<string, number>>(new Map());
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -109,7 +111,20 @@ function Loyers() {
     if (err) setErreur(err.message);
     setImmeubles((im.data ?? []) as Immeuble[]);
     setLogements(((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero)));
-    setSoldesMois((so.data ?? []) as Solde[]);
+    const soldes = (so.data ?? []) as Solde[];
+    setSoldesMois(soldes);
+    const parEcheance = new Map<string, number>();
+    if (soldes.length) {
+      const { data, error } = await supabase.from("paiements")
+        .select("echeance_id, montant_cents")
+        .in("echeance_id", soldes.map((x) => x.echeance_id))
+        .eq("statut", "recu").neq("mode", "credit").is("deleted_at", null);
+      if (error) setErreur(error.message);
+      for (const p of (data ?? []) as { echeance_id: string; montant_cents: number }[]) {
+        parEcheance.set(p.echeance_id, (parEcheance.get(p.echeance_id) ?? 0) + p.montant_cents);
+      }
+    }
+    setDepots(parEcheance);
     setRetards((re.data ?? []) as Solde[]);
     setChargement(false);
   }, [mois]);
@@ -199,26 +214,29 @@ function Loyers() {
   }
 
   const totaux = useMemo(() => ({
+    depots: soldesMois.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
     du: soldesMois.reduce((s, x) => s + x.montant_du_cents, 0),
     recu: soldesMois.reduce((s, x) => s + x.recu_cents, 0),
     retard: retards.reduce((s, x) => s + x.solde_cents, 0),
     reste: soldesMois.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
-  }), [soldesMois, retards]);
+  }), [soldesMois, retards, depots]);
   const totauxImmeubles = useMemo(() => immeubles.map((im) => {
     const liste = soldesMois.filter((x) => x.immeuble_id === im.id);
     return {
       im,
+      depots: liste.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
       du: liste.reduce((s, x) => s + x.montant_du_cents, 0),
       recu: liste.reduce((s, x) => s + x.recu_cents, 0),
       reste: liste.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
     };
-  }), [immeubles, soldesMois]);
+  }), [immeubles, soldesMois, depots]);
 
   if (!pret || !session) return null;
 
   const estMoisCourant = mois === moisCourant();
   const aller = (n: number) => router.replace(`/loyers?m=${decalerMois(mois, n).slice(0, 7)}`, { scroll: false });
-  const pctRecu = totaux.du ? Math.min(100, Math.round((totaux.recu / totaux.du) * 100)) : 0;
+  const pctDepose = totaux.du ? Math.min(100, Math.round((totaux.depots / totaux.du) * 100)) : 0;
+  const credits = totaux.recu - totaux.depots;
 
   return (
     <main className="page avec-onglets">
@@ -228,33 +246,35 @@ function Loyers() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      {/* À encaisser ce mois-ci ; toucher = par immeuble */}
+      {/* Dépôts faits ce mois-ci ; toucher = par immeuble (v0.9.4) */}
       <div role="button" tabIndex={0} className="carte encadre-touchable" aria-expanded={parImmeuble}
            onClick={() => setParImmeuble(!parImmeuble)}
            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setParImmeuble(!parImmeuble); } }}>
         <div className="chiffre-libelle">
-          À encaisser en <span>{moisLisible(mois)}</span>
+          Dépôts faits en <span>{moisLisible(mois)}</span>
         </div>
         <div className="graphique-haut" style={{ marginTop: 6 }}>
-          <Anneau total={totaux.du} parts={[{ valeur: totaux.recu, couleur: "var(--accent)" }]}
-                  centre={`${pctRecu} %`} sousCentre="encaissé" taille={96} />
+          <Anneau total={totaux.du} parts={[{ valeur: totaux.depots, couleur: "var(--accent)" }]}
+                  centre={`${pctDepose} %`} sousCentre="déposé" taille={96} />
           <div>
-            <div className="chiffre">{formatCents(totaux.reste)}</div>
-            <div className="chiffre-libelle">Encaissé {formatCents(totaux.recu)} sur {formatCents(totaux.du)}</div>
+            <div className="chiffre">{formatCents(totaux.depots)}</div>
+            <div className="chiffre-libelle">Déposé sur {formatCents(totaux.du)} dus</div>
+            {credits > 0 && <div className="chiffre-libelle">+ {formatCents(credits)} en crédits au locataire</div>}
+            {totaux.reste > 0 && <div className="chiffre-libelle">Reste à recevoir : {formatCents(totaux.reste)}</div>}
           </div>
         </div>
         {parImmeuble && (
           <div className="ventilation">
-            {totauxImmeubles.map(({ im, du, recu, reste }, i) => (
+            {totauxImmeubles.map(({ im, depots: dep, du }, i) => (
               <div className="ventilation-ligne" key={im.id}>
                 <div className="entete">
                   <strong>{im.nom}</strong>
-                  <strong>{formatCents(reste)}</strong>
+                  <strong>{formatCents(dep)}</strong>
                 </div>
                 <div className="repartition-barre">
-                  <span style={{ width: `${du ? Math.min(100, (recu / du) * 100) : 0}%`, background: couleur(i) }} />
+                  <span style={{ width: `${du ? Math.min(100, (dep / du) * 100) : 0}%`, background: couleur(i) }} />
                 </div>
-                <div className="chiffre-libelle">Encaissé {formatCents(recu)} sur {formatCents(du)}</div>
+                <div className="chiffre-libelle">Déposé {formatCents(dep)} sur {formatCents(du)} dus</div>
               </div>
             ))}
           </div>

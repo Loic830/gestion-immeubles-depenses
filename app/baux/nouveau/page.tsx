@@ -3,10 +3,10 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { supabase, BUCKET_RECUS } from "@/lib/supabase";
-import { type FichierPrepare } from "@/lib/image";
+import { supabase } from "@/lib/supabase";
+import { DOCUMENTS_BAIL, televerserDocument, type PagesParType } from "@/lib/documents";
 import { useSession } from "@/lib/useSession";
-import { prochainPremierJuillet, dateLisible, aujourdhuiIso, lendemain } from "@/lib/dates";
+import { prochainPremierJuillet, dateLisible, lendemain } from "@/lib/dates";
 import FormulaireBail, { nouveauLocataire, type BailSaisi } from "@/components/FormulaireBail";
 
 type BailExistant = {
@@ -18,7 +18,7 @@ type BailExistant = {
   locataires: string | null;
 };
 /** Pop-up « Il y a déjà un bail en cours… » */
-type Remplacement = { ancien: BailExistant; finAncien: string; p: BailSaisi; pages: FichierPrepare[] };
+type Remplacement = { ancien: BailExistant; finAncien: string; p: BailSaisi; pages: PagesParType };
 
 /** Dernier jour du mois avant la date : « 2027-07-01 » ou « 2027-07-15 » → « 2027-06-30 » */
 function finMoisPrecedent(iso: string): string {
@@ -60,31 +60,20 @@ function NouveauBail() {
     notes: "",
   }));
 
-  /** Envoie les pages du bail une fois le bail créé ; retourne le nombre d'échecs. */
-  async function televerserPages(bailId: string, pages: FichierPrepare[]): Promise<number> {
+  /** Envoie les photos (bail, enquête de crédit, règlements) une fois le bail créé ; retourne le nombre d'échecs. */
+  async function televerserPages(bailId: string, pages: PagesParType): Promise<number> {
+    const liste = DOCUMENTS_BAIL.flatMap((d) => pages[d.type].map((f) => ({ type: d.type, f })));
     let echecs = 0;
-    for (let i = 0; i < pages.length; i++) {
-      setEnvoi(`Envoi du bail ${i + 1} / ${pages.length}…`);
-      const f = pages[i];
-      const maintenant = new Date();
-      const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
-      const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
-      const envoiFichier = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
-      if (envoiFichier.error) { echecs++; continue; }
-      const { error } = await supabase.from("documents").insert({
-        bail_id: bailId, type: "bail", storage_key: cle, mime_type: f.mimeType,
-        date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
-      });
-      if (error) echecs++;
+    for (let i = 0; i < liste.length; i++) {
+      setEnvoi(`Envoi des photos ${i + 1} / ${liste.length}…`);
+      try { await televerserDocument(bailId, liste[i].type, liste[i].f); } catch { echecs++; }
     }
     return echecs;
   }
 
-  async function terminer(bailId: string, pages: FichierPrepare[]) {
-    if (pages.length) {
-      const echecs = await televerserPages(bailId, pages);
-      if (echecs) window.alert(`Le bail est enregistré, mais ${echecs} page(s) n'ont pas pu être envoyées. Ajoute-les depuis la fiche du bail.`);
-    }
+  async function terminer(bailId: string, pages: PagesParType) {
+    const echecs = await televerserPages(bailId, pages);
+    if (echecs) window.alert(`Le bail est enregistré, mais ${echecs} page(s) n'ont pas pu être envoyées. Ajoute-les depuis la fiche du bail.`);
     router.replace(`/baux/${bailId}`);
   }
 
@@ -94,7 +83,7 @@ function NouveauBail() {
       : message;
   }
 
-  async function enregistrer(p: BailSaisi, pages: FichierPrepare[]) {
+  async function enregistrer(p: BailSaisi, pages: PagesParType) {
     setEnvoi("Vérification…");
     // Un bail couvre-t-il déjà une partie de la période du nouveau bail ?
     const { data, error: errLecture } = await supabase.from("v_baux")
