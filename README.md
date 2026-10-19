@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -94,6 +94,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (Immeubles, Véhicules : ajout, vendus) ; Rapport d'impôts |
 | `app/profil/vehicules/[id]/page.tsx` | Détail d'un véhicule : marque, modèle, couleur, année ; vente ; suppression (v0.9.0) |
 | `components/FormulaireVehicule.tsx` | Ajouter / modifier un véhicule (onglet Véhicules et Profil) |
+| `components/Graphiques.tsx` | Petits graphiques SVG sans dépendance (v0.9.2) : `Anneau`, `Barres` (empilées), `Legende` ; couleurs `--g1` à `--g6` dans globals.css |
 | `components/RapportImpots.tsx` | Profil > Rapport d'impôts : année, dépenses + reçus (ZIP), CSV, dossier de chaque véhicule |
 | `lib/exportDepenses.ts` | Dépenses d'une année complète (par paquets de 1000) et export CSV |
 | `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente, suppression de partout |
@@ -224,7 +225,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 - Onglet « Loyers » : mois courant par défaut, flèches ‹ › pour changer de mois (gardé dans l'adresse `?m=AAAA-MM`).
 - En haut : encaissé sur dû, avec barre de progression ; section « En retard » (tous mois confondus,
-  du plus ancien au plus récent) avec bouton « Appeler ».
+  du plus ancien au plus récent) avec boutons « Appeler » et « Texter » (v0.9.2).
 - Toucher un logement ouvre une feuille : montant (solde restant), mode (celui du bail), date reçue, référence.
   Montant = solde → bouton « Reçu » ; sinon « Enregistrer ce montant » (paiement partiel).
 - Les paiements déjà enregistrés sont listés dans la feuille ; « Annuler » = suppression douce (erreur de saisie).
@@ -364,6 +365,24 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 **Règle pour toute nouvelle notification** : titre (l'action) + description (ce qu'il faut faire). L'ajouter
 1) au `CATALOGUE` de `lib/notifications.ts` (elle apparaît alors dans « Tester les notifications possibles » et dans les
 préférences) et 2) dans `alertes_du_jour()` par une nouvelle migration, avec le même code et la même portée.
+
+## Graphiques et contact des locataires (v0.9.2)
+
+- Composant `components/Graphiques.tsx` (SVG maison, aucune librairie) ; couleurs `--g1` à `--g6` (clair et sombre) dans `globals.css`.
+- **Dépenses** : le récapitulatif affiche toujours l'anneau des catégories (5 plus grosses + « Autres ») avec la légende
+  (montant et %), dès qu'il y a une dépense, en mode Mois comme en mode Année. Barres : par semaine du mois
+  (1-7, 8-14, 15-21, 22-28, 29-fin) en mode Mois, par mois en mode Année ; la période en cours est foncée.
+  Avant, la liste par catégorie n'apparaissait qu'à partir de 2 catégories (souvent seulement en mode Année).
+- **Baux** : encadré du haut touchable. Par défaut : anneau du taux d'occupation (logements actifs avec un bail en cours),
+  loyers par mois des baux en cours (loyer + extras) et barres des loyers dus chaque mois de l'année (la plus récente
+  des années choisies, `v_soldes.montant_du_cents`). Touché : occupation et loyers par immeuble, barres empilées par immeuble.
+  L'encadré ignore le filtre d'immeuble et la recherche.
+- **Loyers** : encadré du haut touchable. Par défaut : reste à encaisser dans le mois affiché (soldes positifs),
+  encaissé sur dû et anneau du %. Touché : la même chose par immeuble. Le sélecteur de mois est juste en dessous.
+- **Retards** : « Appeler » (`tel:`) et « Texter » (`sms:numéro&body=…`, format iPhone) avec un rappel prérempli
+  (prénom, mois, logement, solde) ; l'app Messages s'ouvre, rien n'est envoyé sans toucher Envoyer. Sans numéro
+  (téléphone du locataire principal) : lien « Ajouter un numéro » vers Modifier le bail. Les mêmes boutons sont dans
+  la feuille de paiement d'un loyer en retard.
 
 ## Thème
 

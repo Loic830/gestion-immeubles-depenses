@@ -8,6 +8,18 @@ import { useSession } from "@/lib/useSession";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, moisLisible, triNumero } from "@/lib/dates";
 import BarreOnglets from "@/components/BarreOnglets";
+import { Anneau, couleur } from "@/components/Graphiques";
+
+/** Numéro pour tel: et sms: (chiffres et +) */
+const numero = (t: string) => t.replace(/[^\d+]/g, "");
+/** Texto de rappel prérempli ; l'app Messages s'ouvre, rien n'est envoyé sans toucher Envoyer */
+function lienTexto(s: Solde): string {
+  const prenom = (s.locataires ?? "").split(",")[0].trim().split(" ")[0];
+  const texte = `Bonjour${prenom ? ` ${prenom}` : ""}, petit rappel : le loyer de ${moisLisible(s.mois)} pour le logement ${s.logement}`
+    + ` (${formatCents(s.solde_cents)}) n'est pas encore reçu. Merci de me faire signe.`;
+  // iPhone : sms:numéro&body=…
+  return `sms:${numero(s.telephone ?? "")}&body=${encodeURIComponent(texte)}`;
+}
 
 type Mode = "interac" | "cheque" | "prelevement" | "comptant" | "credit";
 type Solde = {
@@ -80,6 +92,8 @@ function Loyers() {
   const [envoi, setEnvoi] = useState(false);
   // Crédit au locataire (ex. achat remboursé sur le loyer)
   const [creditOuvert, setCreditOuvert] = useState(false);
+  // Encadré du haut : total, ou ventilé par immeuble quand on le touche
+  const [parImmeuble, setParImmeuble] = useState(false);
   const [montantCredit, setMontantCredit] = useState("");
   const [raisonCredit, setRaisonCredit] = useState("");
 
@@ -188,7 +202,17 @@ function Loyers() {
     du: soldesMois.reduce((s, x) => s + x.montant_du_cents, 0),
     recu: soldesMois.reduce((s, x) => s + x.recu_cents, 0),
     retard: retards.reduce((s, x) => s + x.solde_cents, 0),
+    reste: soldesMois.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
   }), [soldesMois, retards]);
+  const totauxImmeubles = useMemo(() => immeubles.map((im) => {
+    const liste = soldesMois.filter((x) => x.immeuble_id === im.id);
+    return {
+      im,
+      du: liste.reduce((s, x) => s + x.montant_du_cents, 0),
+      recu: liste.reduce((s, x) => s + x.recu_cents, 0),
+      reste: liste.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
+    };
+  }), [immeubles, soldesMois]);
 
   if (!pret || !session) return null;
 
@@ -204,6 +228,40 @@ function Loyers() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
+      {/* À encaisser ce mois-ci ; toucher = par immeuble */}
+      <div role="button" tabIndex={0} className="carte encadre-touchable" aria-expanded={parImmeuble}
+           onClick={() => setParImmeuble(!parImmeuble)}
+           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setParImmeuble(!parImmeuble); } }}>
+        <div className="chiffre-libelle">
+          À encaisser en <span>{moisLisible(mois)}</span>
+        </div>
+        <div className="graphique-haut" style={{ marginTop: 6 }}>
+          <Anneau total={totaux.du} parts={[{ valeur: totaux.recu, couleur: "var(--accent)" }]}
+                  centre={`${pctRecu} %`} sousCentre="encaissé" taille={96} />
+          <div>
+            <div className="chiffre">{formatCents(totaux.reste)}</div>
+            <div className="chiffre-libelle">Encaissé {formatCents(totaux.recu)} sur {formatCents(totaux.du)}</div>
+          </div>
+        </div>
+        {parImmeuble && (
+          <div className="ventilation">
+            {totauxImmeubles.map(({ im, du, recu, reste }, i) => (
+              <div className="ventilation-ligne" key={im.id}>
+                <div className="entete">
+                  <strong>{im.nom}</strong>
+                  <strong>{formatCents(reste)}</strong>
+                </div>
+                <div className="repartition-barre">
+                  <span style={{ width: `${du ? Math.min(100, (recu / du) * 100) : 0}%`, background: couleur(i) }} />
+                </div>
+                <div className="chiffre-libelle">Encaissé {formatCents(recu)} sur {formatCents(du)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="encadre-indice">{parImmeuble ? "Toucher pour revenir au total" : "Toucher pour voir par immeuble"}</div>
+      </div>
+
       {/* Mois */}
       <section className="carte">
         <div className="selecteur-mois">
@@ -214,10 +272,6 @@ function Loyers() {
         {!estMoisCourant && (
           <button className="lien-filtres" style={{ margin: "8px auto 0" }} onClick={() => router.replace("/loyers")}>Revenir au mois courant</button>
         )}
-        <div className="total-periode" style={{ marginTop: 12 }}>
-          Encaissé : <strong>{formatCents(totaux.recu)}</strong> sur {formatCents(totaux.du)}
-        </div>
-        <div className="repartition-barre" style={{ marginTop: 8 }}><span style={{ width: `${pctRecu}%` }} /></div>
       </section>
 
       {/* Retards, tous mois confondus */}
@@ -236,7 +290,14 @@ function Loyers() {
               </button>
               <div style={{ textAlign: "right" }}>
                 <div className="montant">{formatCents(r.solde_cents)}</div>
-                {r.telephone && <a className="lien-tel" href={`tel:${r.telephone.replace(/[^\d+]/g, "")}`}>Appeler</a>}
+                {r.telephone ? (
+                  <div className="contact-locataire">
+                    <a className="lien-tel" href={`tel:${numero(r.telephone)}`}>Appeler</a>
+                    <a className="lien-tel" href={lienTexto(r)}>Texter</a>
+                  </div>
+                ) : (
+                  <Link className="lien-tel" style={{ color: "var(--discret)" }} href={`/baux/${r.bail_id}/modifier`}>Ajouter un numéro</Link>
+                )}
               </div>
             </div>
           ))}
@@ -302,6 +363,13 @@ function Loyers() {
             <div className="aide" style={{ marginTop: 0 }}>
               {choisie.locataires} · <span style={{ textTransform: "capitalize" }}>{moisLisible(choisie.mois)}</span> · dû {formatCents(choisie.montant_du_cents)}
             </div>
+
+            {choisie.jours_retard > 0 && choisie.telephone && (
+              <div className="boutons-contact">
+                <a className="bouton" href={`tel:${numero(choisie.telephone)}`}>Appeler</a>
+                <a className="bouton" href={lienTexto(choisie)}>Texter</a>
+              </div>
+            )}
 
             {paiements.length > 0 && (
               <div style={{ marginTop: 10 }}>

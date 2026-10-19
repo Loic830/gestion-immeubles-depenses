@@ -8,6 +8,7 @@ import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { ajouterMois, aujourdhuiIso, finDuMois, moisLisible } from "@/lib/dates";
 import BarreOnglets from "@/components/BarreOnglets";
+import { Anneau, Barres, Legende, MOIS_COURTS, couleur } from "@/components/Graphiques";
 
 type Ligne = {
   ligne_id: string;
@@ -138,6 +139,30 @@ function ListeDepenses() {
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [lignes]);
+  // Anneau : les 5 plus grosses catégories, le reste dans « Autres »
+  const partsAnneau = useMemo(() => {
+    const tete = parCategorie.slice(0, 5);
+    const reste = parCategorie.slice(5).reduce((s, [, c]) => s + c, 0);
+    return reste > 0 ? [...tete, ["Autres", reste] as [string, number]] : tete;
+  }, [parCategorie]);
+  // Barres : par mois en mode Année, par semaine (1-7, 8-14, …) en mode Mois
+  const colonnes = useMemo(() => {
+    if (mode === "annee") {
+      const v = Array(12).fill(0);
+      for (const l of lignes) v[Number(l.date_facture.slice(5, 7)) - 1] += l.montant_cents ?? 0;
+      return v.map((c, i) => ({ etiquette: MOIS_COURTS[i], valeurs: [c] }));
+    }
+    const dernier = Number(fin.slice(8, 10));
+    const v = [0, 0, 0, 0, 0];
+    for (const l of lignes) v[Math.min(4, Math.floor((Number(l.date_facture.slice(8, 10)) - 1) / 7))] += l.montant_cents ?? 0;
+    return v.map((c, i) => ({
+      etiquette: i === 4 ? `29-${dernier}` : `${i * 7 + 1}-${i * 7 + 7}`,
+      valeurs: [c],
+    }));
+  }, [lignes, mode, fin]);
+  const colonneActive = estPeriodeCourante
+    ? mode === "annee" ? Number(moisActuel.slice(5, 7)) - 1 : Math.min(4, Math.floor((Number(aujourdhuiIso().slice(8, 10)) - 1) / 7))
+    : undefined;
 
   const nomsChoisis = immeubles.filter((im) => choisis.includes(im.id)).map((im) => im.nom).join(", ");
 
@@ -161,18 +186,21 @@ function ListeDepenses() {
         {totalCapital > 0 && (
           <p className="aide">Dont {formatCents(totalCapital)} en dépenses en capital (amortissables).</p>
         )}
-        {parCategorie.length > 1 && (
-          <div className="repartition">
-            {parCategorie.map(([nom, cents]) => (
-              <div className="repartition-ligne" key={nom}>
-                <span>{nom}</span>
-                <span className="repartition-barre">
-                  <span style={{ width: `${total ? Math.max(2, (cents / total) * 100) : 0}%` }} />
-                </span>
-                <strong>{formatCents(cents)}</strong>
-              </div>
-            ))}
-          </div>
+        {parCategorie.length > 0 && (
+          <>
+            <div className="graphique-haut">
+              <Anneau total={total} parts={partsAnneau.map(([, c], i) => ({ valeur: c, couleur: couleur(i) }))}
+                      centre={String(parCategorie.length)} sousCentre={parCategorie.length > 1 ? "catégories" : "catégorie"} taille={96} />
+              <Legende lignes={partsAnneau.map(([nom, cents], i) => ({
+                nom, cents, couleur: couleur(i),
+                detail: total ? `${Math.round((cents / total) * 100)} %` : undefined,
+              }))} />
+            </div>
+            <Barres colonnes={colonnes} actif={colonneActive} />
+            <p className="aide" style={{ textAlign: "center", marginTop: 4 }}>
+              {mode === "annee" ? "Dépenses par mois" : "Dépenses par semaine du mois (jours)"}
+            </p>
+          </>
         )}
         {lignes.length >= LIMITE && (
           <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : passe en mode Mois.</p>
