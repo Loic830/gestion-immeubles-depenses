@@ -7,9 +7,12 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, triNumero } from "@/lib/dates";
-import { anneesProposees, bailDansAnnees, libellePeriode, lireAnnees } from "@/lib/baux";
+import { ETATS, anneesProposees, bailDansAnnees, etatsBail, libellePeriode, lireAnnees, lireEtats, type EtatBail } from "@/lib/baux";
 import BarreOnglets from "@/components/BarreOnglets";
 import { exporterDossierPreteur } from "@/lib/exportBaux";
+import { Anneau, Barres, MOIS_COURTS, couleur } from "@/components/Graphiques";
+
+type DuMois = { mois: string; immeuble_id: string; montant_du_cents: number };
 
 type Immeuble = { id: string; nom: string; adresse: string | null };
 type Logement = { id: string; immeuble_id: string; numero: string };
@@ -51,25 +54,47 @@ function Baux() {
   const [exportEnCours, setExportEnCours] = useState<{ id: string; etape: string } | null>(null);
   const [exportResultat, setExportResultat] = useState<{ id: string; texte: string } | null>(null);
   const [recherche, setRecherche] = useState("");
+  // Encadré du haut : global, ou ventilé par immeuble quand on le touche
+  const [parImmeuble, setParImmeuble] = useState(false);
+  const [dusAnnee, setDusAnnee] = useState<DuMois[]>([]);
 
-  // Filtres gardés dans l'adresse : ?a=2026,2025 (années) & i=<immeuble>
+  // Filtres gardés dans l'adresse : ?a=2026,2025 (années) & i=<immeuble> & l=<logement>,<logement> & e=actif,termine (états)
   const annees = lireAnnees(params.get("a"));
   const immeubleFiltre = params.get("i") ?? "";
+  const logementsFiltre = immeubleFiltre ? (params.get("l") ?? "").split(",").filter(Boolean) : [];
+  const etatsFiltre = lireEtats(params.get("e"));
   const anneeCourante = anneesProposees()[0];
   const periode = libellePeriode(annees);
+  // Graphique des loyers par mois : la plus récente des années choisies
+  const anneeGraphique = annees[0];
 
-  function majFiltres(nouvellesAnnees: number[], immeuble: string) {
+  function majFiltres(f: { annees?: number[]; immeuble?: string; logements?: string[]; etats?: EtatBail[] }) {
+    const nouvellesAnnees = f.annees ?? annees;
+    const immeuble = f.immeuble ?? immeubleFiltre;
+    // Changer d'immeuble remet les logements à « Tous »
+    const lo = f.logements ?? (immeuble === immeubleFiltre ? logementsFiltre : []);
+    const etats = f.etats ?? etatsFiltre;
     const q = new URLSearchParams();
     const t = [...nouvellesAnnees].sort((x, y) => y - x);
     if (!(t.length === 1 && t[0] === anneeCourante)) q.set("a", t.join(","));
     if (immeuble) q.set("i", immeuble);
+    if (immeuble && lo.length) q.set("l", lo.join(","));
+    if (etats.length) q.set("e", etats.join(","));
     router.replace(`/baux${q.toString() ? `?${q}` : ""}`, { scroll: false });
   }
 
   function basculerAnnee(a: number) {
     const avec = annees.includes(a) ? annees.filter((x) => x !== a) : [...annees, a];
     if (avec.length === 0) return; // au moins une année
-    majFiltres(avec, immeubleFiltre);
+    majFiltres({ annees: avec });
+  }
+
+  function basculerLogement(id: string) {
+    majFiltres({ logements: logementsFiltre.includes(id) ? logementsFiltre.filter((x) => x !== id) : [...logementsFiltre, id] });
+  }
+
+  function basculerEtat(e: EtatBail) {
+    majFiltres({ etats: etatsFiltre.includes(e) ? etatsFiltre.filter((x) => x !== e) : [...etatsFiltre, e] });
   }
 
   async function dossierPreteur(im: Immeuble) {
@@ -111,18 +136,50 @@ function Baux() {
     })();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    supabase.from("v_soldes").select("mois, immeuble_id, montant_du_cents")
+      .gte("mois", `${anneeGraphique}-01-01`).lte("mois", `${anneeGraphique}-12-01`)
+      .then(({ data }) => setDusAnnee((data ?? []) as DuMois[]));
+  }, [session, anneeGraphique]);
+
   if (!pret || !session) return null;
 
   const auj = aujourdhuiIso();
   const nbOccupes = logements.filter((l) => baux.some((b) => b.logement_id === l.id && b.statut === "actif")).length;
   const loyersMensuels = baux.filter((b) => b.statut === "actif").reduce((s, b) => s + b.loyer_cents + b.extras_cents, 0);
+  const pctOccupation = logements.length ? Math.round((nbOccupes / logements.length) * 100) : 0;
+  const parIm = immeubles.map((im) => {
+    const lo = logements.filter((l) => l.immeuble_id === im.id);
+    const actifs = baux.filter((b) => b.statut === "actif" && lo.some((l) => l.id === b.logement_id));
+    const occupes = lo.filter((l) => actifs.some((b) => b.logement_id === l.id)).length;
+    return { im, total: lo.length, occupes, loyers: actifs.reduce((s, b) => s + b.loyer_cents + b.extras_cents, 0) };
+  });
+  // Loyers dus chaque mois de l'année (prix des logements loués ce mois-là), total ou par immeuble
+  const colonnesLoyers = MOIS_COURTS.map((etiquette, i) => {
+    const m = `${anneeGraphique}-${String(i + 1).padStart(2, "0")}-01`;
+    const duMois = dusAnnee.filter((d) => d.mois === m);
+    return {
+      etiquette,
+      valeurs: parImmeuble
+        ? immeubles.map((im) => duMois.filter((d) => d.immeuble_id === im.id).reduce((s, d) => s + d.montant_du_cents, 0))
+        : [duMois.reduce((s, d) => s + d.montant_du_cents, 0)],
+    };
+  });
+  const moisActif = anneeGraphique === Number(auj.slice(0, 4)) ? Number(auj.slice(5, 7)) - 1 : undefined;
   const avisAEnvoyer = baux.filter((b) => b.avis_du && !b.date_depart && !b.date_avis_envoye && b.avis_du <= auj && (b.avis_au ?? "") >= auj).length;
 
   const q = simplifier(recherche);
   const dansPeriode = baux.filter((b) => bailDansAnnees(b, annees));
-  const correspond = (b: Bail, l: Logement) => !q || simplifier(b.locataires ?? "").includes(q) || simplifier(l.numero) === q;
+  const aVenirSur = (logementId: string) => baux.some((b) => b.logement_id === logementId && b.statut === "a_venir");
+  const bonEtat = (b: Bail) => etatsFiltre.length === 0 || etatsBail(b, aVenirSur(b.logement_id)).some((e) => etatsFiltre.includes(e));
+  const correspond = (b: Bail, l: Logement) => bonEtat(b) && (!q || simplifier(b.locataires ?? "").includes(q) || simplifier(l.numero) === q);
+  const logementChoisi = (l: Logement) => logementsFiltre.length === 0 || logementsFiltre.includes(l.id);
+  // Un filtre qui cache des baux : les logements sans bail correspondant ne sont pas listés
+  const filtreBaux = !!q || etatsFiltre.length > 0;
   const nbDansPeriode = dansPeriode.filter((b) => logements.some((l) => l.id === b.logement_id
-    && (!immeubleFiltre || l.immeuble_id === immeubleFiltre) && correspond(b, l))).length;
+    && (!immeubleFiltre || l.immeuble_id === immeubleFiltre) && logementChoisi(l) && correspond(b, l))).length;
+  const logementsImmeuble = logements.filter((l) => l.immeuble_id === immeubleFiltre);
   const immeublesAffiches = immeubles.filter((im) => !immeubleFiltre || im.id === immeubleFiltre);
 
   return (
@@ -134,11 +191,44 @@ function Baux() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      <section className="carte total-periode">
-        Occupés : <strong>{nbOccupes} / {logements.length}</strong>
-        {" · "}Loyers : <strong>{formatCents(loyersMensuels)}</strong> / mois
+      {/* Occupation et loyers ; toucher = par immeuble */}
+      <div role="button" tabIndex={0} className="carte encadre-touchable" aria-expanded={parImmeuble}
+           onClick={() => setParImmeuble(!parImmeuble)}
+           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setParImmeuble(!parImmeuble); } }}>
+        <div className="graphique-haut" style={{ marginTop: 0 }}>
+          <Anneau total={logements.length} parts={[{ valeur: nbOccupes, couleur: "var(--accent)" }]}
+                  centre={`${pctOccupation} %`} sousCentre="occupés" taille={96} />
+          <div>
+            <div className="chiffre-libelle">Occupés : {nbOccupes} / {logements.length} logements</div>
+            <div className="chiffre">{formatCents(loyersMensuels)}</div>
+            <div className="chiffre-libelle">de loyers par mois (baux en cours)</div>
+          </div>
+        </div>
+        {parImmeuble && (
+          <div className="ventilation">
+            {parIm.map(({ im, total, occupes, loyers }, i) => (
+              <div className="ventilation-ligne" key={im.id}>
+                <div className="entete">
+                  <strong><span className="legende-point" style={{ background: couleur(i), display: "inline-block", marginRight: 6 }} />{im.nom}</strong>
+                  <strong>{formatCents(loyers)} / mois</strong>
+                </div>
+                <div className="repartition-barre">
+                  <span style={{ width: `${total ? (occupes / total) * 100 : 0}%`, background: couleur(i) }} />
+                </div>
+                <div className="chiffre-libelle">
+                  Occupés : {occupes} / {total} · {total ? Math.round((occupes / total) * 100) : 0} %
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <Barres colonnes={colonnesLoyers} couleurs={parImmeuble ? immeubles.map((_, i) => couleur(i)) : undefined} actif={moisActif} />
+        <p className="aide" style={{ textAlign: "center", marginTop: 4 }}>
+          Loyers par mois en {anneeGraphique}{parImmeuble ? ", par immeuble" : ""}
+        </p>
         {avisAEnvoyer > 0 && <p className="aide" style={{ color: "var(--alerte)" }}>{avisAEnvoyer} avis de renouvellement à envoyer maintenant.</p>}
-      </section>
+        <div className="encadre-indice">{parImmeuble ? "Toucher pour revenir au total" : "Toucher pour voir par immeuble"}</div>
+      </div>
 
       {/* Filtres */}
       <section className="carte">
@@ -155,15 +245,44 @@ function Baux() {
         {immeubles.length > 1 && (
           <div className="puces" style={{ marginTop: 12 }}>
             <span className={`puce${!immeubleFiltre ? " actif" : ""}`}>
-              <button type="button" onClick={() => majFiltres(annees, "")}>Tous</button>
+              <button type="button" onClick={() => majFiltres({ immeuble: "" })}>Tous</button>
             </span>
             {immeubles.map((im) => (
               <span key={im.id} className={`puce${immeubleFiltre === im.id ? " actif" : ""}`}>
-                <button type="button" onClick={() => majFiltres(annees, im.id)}>{im.nom}</button>
+                <button type="button" onClick={() => majFiltres({ immeuble: im.id })}>{im.nom}</button>
               </span>
             ))}
           </div>
         )}
+
+        {/* Logements de l'immeuble choisi (pas avec « Tous ») */}
+        {immeubleFiltre && logementsImmeuble.length > 1 && (
+          <>
+            <strong style={{ display: "block", marginTop: 12 }}>Logements</strong>
+            <div className="puces">
+              <span className={`puce${logementsFiltre.length === 0 ? " actif" : ""}`}>
+                <button type="button" onClick={() => majFiltres({ logements: [] })}>Tous</button>
+              </span>
+              {logementsImmeuble.map((l) => (
+                <span key={l.id} className={`puce${logementsFiltre.includes(l.id) ? " actif" : ""}`}>
+                  <button type="button" aria-pressed={logementsFiltre.includes(l.id)} onClick={() => basculerLogement(l.id)}>{l.numero}</button>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+
+        <strong style={{ display: "block", marginTop: 12 }}>État des baux</strong>
+        <div className="puces">
+          <span className={`puce${etatsFiltre.length === 0 ? " actif" : ""}`}>
+            <button type="button" onClick={() => majFiltres({ etats: [] })}>Tous</button>
+          </span>
+          {ETATS.map((e) => (
+            <span key={e.code} className={`puce${etatsFiltre.includes(e.code) ? " actif" : ""}`}>
+              <button type="button" aria-pressed={etatsFiltre.includes(e.code)} onClick={() => basculerEtat(e.code)}>{e.libelle}</button>
+            </span>
+          ))}
+        </div>
 
         <input type="search" placeholder="Chercher un locataire ou un numéro" autoComplete="off" value={recherche}
                onChange={(e) => setRecherche(e.target.value)} style={{ marginTop: 12, width: "100%" }} aria-label="Chercher" />
@@ -173,11 +292,11 @@ function Baux() {
       {chargement && <p className="aide">Chargement…</p>}
 
       {immeublesAffiches.map((im) => {
-        const logementsIm = logements.filter((l) => l.immeuble_id === im.id);
+        const logementsIm = logements.filter((l) => l.immeuble_id === im.id && logementChoisi(l));
         const lignes = logementsIm.map((l) => ({
           l,
           liste: dansPeriode.filter((b) => b.logement_id === l.id && correspond(b, l)),
-        })).filter((x) => !q || x.liste.length > 0);
+        })).filter((x) => !filtreBaux || x.liste.length > 0);
         return (
           <section key={im.id}>
             <div className="entete" style={{ margin: "20px 0 8px", alignItems: "flex-start" }}>
@@ -217,7 +336,7 @@ function Baux() {
                   );
                 }
                 return liste.map((bail) => {
-                  const aVenirApres = bail.statut === "actif" && baux.some((b) => b.logement_id === l.id && b.statut === "a_venir");
+                  const aVenirApres = bail.statut === "actif" && aVenirSur(l.id);
                   const fenetreOuverte = bail.avis_du && !bail.date_depart && !bail.date_avis_envoye && bail.avis_du <= auj && (bail.avis_au ?? "") >= auj;
                   return (
                     <Link key={bail.id} href={`/baux/${bail.id}`} className="logement-ligne">
@@ -238,6 +357,7 @@ function Baux() {
                       {bail.statut === "actif" && bail.date_depart && (aVenirApres
                         ? <span className="pastille">Relocation faite</span>
                         : <span className="pastille vacant">Départ</span>)}
+                      {bail.statut === "actif" && !bail.date_depart && aVenirApres && <span className="pastille ok">Renouvelé</span>}
                       {fenetreOuverte && <span className="pastille">Avis TAL</span>}
                     </Link>
                   );

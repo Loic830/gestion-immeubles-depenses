@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **19 octobre 2026**, version **0.9.2**.
+> ou par une nouvelle conversation avec Claude. État au **19 octobre 2026**, version **0.9.3**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -26,7 +26,7 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicules.
 1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; encadré « À encaisser » du mois (toucher = par immeuble) et boutons « Appeler » / « Texter » pour les retards (v0.9.2).
 2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8) ; choix d'un ou plusieurs immeubles (puces « Tous » + chaque immeuble, v0.9.1) ; anneau par catégorie et barres en mode Mois et Année (v0.9.2). Les exports sont dans Profil > Rapport d'impôts (v0.9.0).
-3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2).
+3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2) ; filtres par logement (immeuble choisi) et par état des baux, « Renouveler le bail », « Modifier le prix du loyer » (v0.9.3).
 4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
 6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs séparés en **Immeubles** (ajout, logements, vente, « Supprimer cet immeuble de partout ») et **Véhicules** (ajout, modification, vente, suppression) ; **Rapport d'impôts** (v0.9.0) : année + dépenses et reçus (ZIP), CSV, dossier de chaque véhicule ; en bas, « Tester les notifications possibles » (v0.8.9).
@@ -89,8 +89,9 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 013 | `013_notifications.sql` | `notifications` (lue_le, poussee_le, cle unique), `notifications_exclusions`, `abonnements_push` (RLS : chacun ses lignes) ; `alertes_du_jour()`, `generer_notifications()` ; aides `date_fr`, `cents_fr`, `de_mois_fr` (v0.8.9) | **à exécuter** |
 | 014 | `014_vehicules_actifs.sql` | `vehicules` : marque, modele, couleur, annee, date_vente, prix_vente_cents ; RPC `supprimer_vehicule`, `supprimer_immeuble` (security definer, suppression douce en cascade) ; `v_depenses_detail` filtre `immeubles.deleted_at` ; index unique partiel sur `immeubles.nom` (v0.9.0) | **à exécuter** |
 | 015 | `015_mois_payes.sql` | RPC `marquer_mois_payes(bail, mois jsonb)` (paiement « reçu » = solde du mois, mode du bail, daté de l'échéance ; seulement les mois échus) ; `creer_bail` redéfinie (copie de 004 + `mois_payes`) (v0.9.1) | **à exécuter** |
+| 016 | `016_renouveler_bail.sql` | RPC `renouveler_bail(bail, début, fin, loyer)` (via `creer_bail`, `bail_precedent_id`, réponse = acceptée) ; `alertes_du_jour` redéfinie (copie de 013 + pas d'avis TAL si un bail suit avec `bail_precedent_id`) (v0.9.3) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `016_…`.
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `017_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
@@ -147,7 +148,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels |
 | `lib/fraisFixes.ts` | types Frais fixes, intérêts de l'année (relevé prioritaire), statut des versements, totaux |
 | `components/FormulaireBail.tsx` | formulaire partagé Nouveau bail / Modifier le bail (validation, paramètre `p` des RPC) |
-| `lib/baux.ts` | période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » |
+| `lib/baux.ts` | période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; `etatsBail`, `ETATS`, `lireEtats` (filtre d'état, v0.9.3) |
 | `components/FormulaireDepense.tsx` | formulaire partagé saisie/modification ; ordre : montant, fournisseur, catégorie, date, immeuble ou répartition |
 | `components/ChoixFournisseur.tsx` | champ fournisseur avec menu (recherche sans accents, plus utilisés en premier) |
 | `components/ConstructeurTrajet.tsx` | composer un trajet par lieux, distances retenues dans les deux sens |
@@ -176,7 +177,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 - **Crédit ponctuel** (ex. porte achetée par le locataire) : paiement de mode `credit` avec raison ; le loyer reste dû au complet (revenu brut intact) ; la dépense correspondante s'entre aussi dans Dépenses.
 - **Crédit mensuel** (ex. tonte de pelouse −50 $) : extra négatif sur le bail ; le revenu est alors inscrit net (à signaler au comptable ; le rapport v1.0 devra l'afficher à part).
 - **Période d'un bail** (onglet Baux, dossier prêteur) : un bail compte pour une année s'il en couvre au moins un jour (du début au départ, sinon à la fin, sinon sans fin) ; les baux à venir suivent l'année courante.
-- **Modifier un bail** = correction d'une erreur de saisie : les montants dus de tous les mois sont recalculés, les paiements restent. Une hausse en cours de bail passe plutôt par « Changer le loyer ». Des mois qui sortiraient du bail avec des paiements bloquent la correction.
+- **Modifier un bail** = correction d'une erreur de saisie : les montants dus de tous les mois sont recalculés, les paiements restent. Une hausse en cours de bail passe plutôt par « Modifier le prix du loyer ». Des mois qui sortiraient du bail avec des paiements bloquent la correction.
 - **Remplacement** : nouveau bail qui chevauche un bail en cours (sans départ inscrit) → l'ancien se termine le dernier jour du mois avant le début du nouveau (`terminer_bail`, sans forfait, raison « Remplacé par un nouveau bail… »), dans la même transaction que la création. Le nouveau bail pointe vers l'ancien (`bail_precedent_id`).
 - **Fin de bail** : `date_depart` inscrite, loyers futurs sans paiement retirés, forfait ajouté au dernier mois, suivi TAL arrêté ; bloqué si des paiements existent après le départ ; annulable tant qu'aucun nouveau bail n'occupe le logement.
 - **Hypothèques** : prêts à taux fixe canadiens, intérêt composé deux fois par année ; taux par versement mensuel
@@ -235,7 +236,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 ## 8. À faire
 
 **Proposé à Maxime, en attente de réponse**
-- Ajouter ou retirer un **extra / crédit mensuel sur un bail existant à partir d'un mois donné** (comme « Changer le loyer ») ;
+- Ajouter ou retirer un **extra / crédit mensuel sur un bail existant à partir d'un mois donné** (comme « Modifier le prix du loyer ») ;
   « Modifier le bail » (v0.8.7) corrige les extras sur tous les mois.
 - (Fait en 0.8.7 : modification des coordonnées des locataires, via « Modifier le bail ».)
 
@@ -249,6 +250,15 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.3)**
+- Exécuter `016_renouveler_bail.sql`. Sans elle, « Renouveler » affiche une erreur (fonction introuvable) ; les filtres marchent sans.
+
+**Choix faits en 0.9.3** : « relation faite » demandé par Maxime = l'état existant « Relocation faite ». États = `etatsBail` (lib/baux.ts),
+plusieurs au choix ; « Actifs » inclut renouvelés, départ prévu et relocation faite. Filtre de logements : seulement avec un immeuble choisi,
+plusieurs au choix. Renouvellement réservé à un bail actif avec date de fin et sans départ (un bail à durée indéterminée se reconduit seul) ;
+durée en mois (12 par défaut), fin = `finApresMois`. Le nouveau bail reprend locataires, extras et crédits ; pour changer le reste,
+« Modifier le bail » sur le nouveau bail. Supprimer le nouveau bail (erreur) réaffiche « Renouveler le bail » sur l'ancien.
 
 **Choix faits en 0.9.2** (pas de migration) : graphiques maison en SVG (`components/Graphiques.tsx`, aucune librairie).
 Dépenses : anneau des 5 plus grosses catégories + « Autres », barres par semaine (mode Mois) ou par mois (mode Année).

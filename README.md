@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.3 : onglet Baux — filtre par logement (sous l'immeuble choisi) et par état des baux (actifs, à venir, renouvelés, départ prévu, relocation faite, terminés) ; « Renouveler le bail » sur la fiche d'un bail actif (prix, début le lendemain de la fin, 12 mois par défaut) ; « Changer le loyer » devient « Modifier le prix du loyer ». 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -36,6 +36,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
     nom d'immeuble unique parmi les non supprimés (v0.9.0).
 15. `supabase/015_mois_payes.sql` — RPC `marquer_mois_payes` ; `creer_bail` accepte `mois_payes` (mois passés déjà payés,
     inscrits « reçus » au mode du bail, datés du jour d'échéance, dans la même transaction) (v0.9.1).
+16. `supabase/016_renouveler_bail.sql` — RPC `renouveler_bail(bail, début, fin, loyer)` : nouveau bail qui suit l'ancien
+    (mêmes locataires, extras, mode, jour, inclusions ; `bail_precedent_id`) ; `alertes_du_jour` : plus d'avis TAL pour un bail renouvelé (v0.9.3).
 
 ## 2. Lancer en local
 
@@ -113,7 +115,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `app/baux/[id]/modifier/page.tsx` | Modifier le bail : tous les détails (RPC modifier_bail) |
 | `app/baux/logement/[id]/page.tsx` | Historique de tous les baux d'un logement |
 | `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail |
-| `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » |
+| `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; états des baux pour le filtre (v0.9.3) |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble et par période : etat_des_loyers.xlsx (un bail par ligne, loyers dus et reçus de la période, onglet « Par année ») + dossier baux/ |
 | `app/vehicule/page.tsx` | Onglet Véhicules : flèches ‹ › entre les véhicules, trajets (fréquents, motif), frais (reçu), compteur, résumé du prorata |
 | `components/ConstructeurTrajet.tsx` | Composer un trajet par lieux ; distances retenues dans les deux sens |
@@ -328,7 +330,7 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - **Modifier le bail** : logement, locataires (coordonnées, ajout, retrait, principal), dates, durée, loyer, extras et crédits,
   mode, jour, inclusions, notes. RPC `modifier_bail` en une transaction : mois hors des nouvelles dates retirés (refusé s'ils ont des
   paiements), mois manquants créés, montants dus recalculés (paiements intacts), fenêtre TAL recalculée. Si le loyer a déjà été
-  changé (« Changer le loyer »), le champ corrige le loyer du début et les changements restent appliqués.
+  changé (« Modifier le prix du loyer »), le champ corrige le loyer du début et les changements restent appliqués.
 - **Pages du bail** : × sur une vignette retire une page ajoutée par erreur (suppression douce, `documents.deleted_at`).
 - **Remplacement** : en enregistrant un nouveau bail, si un bail couvre déjà la période sur ce logement, un pop-up propose de
   mettre fin à l'ancien bail le dernier jour du mois avant le début du nouveau (ex. nouveau bail le 1er décembre → ancien terminé
@@ -383,6 +385,22 @@ préférences) et 2) dans `alertes_du_jour()` par une nouvelle migration, avec l
   (prénom, mois, logement, solde) ; l'app Messages s'ouvre, rien n'est envoyé sans toucher Envoyer. Sans numéro
   (téléphone du locataire principal) : lien « Ajouter un numéro » vers Modifier le bail. Les mêmes boutons sont dans
   la feuille de paiement d'un loyer en retard.
+
+## Baux : filtres et renouvellement (v0.9.3)
+
+- **Logements** : quand un immeuble est choisi (pas « Tous »), une rangée de puces « Tous » + chaque numéro apparaît
+  dessous ; on peut en choisir plusieurs. Adresse : `?i=<immeuble>&l=<logement>,<logement>` (changer d'immeuble remet « Tous »).
+- **État des baux** : puces « Tous », Actifs, À venir, Renouvelés, Départ prévu, Relocation faite, Terminés (plusieurs au choix,
+  `?e=actif,termine`). « Actifs » = tous les baux en cours ; les trois suivants précisent un bail en cours : renouvelé (un bail
+  à venir suit, sans départ), départ prévu (date de départ, rien après), relocation faite (date de départ et un bail à venir).
+  Avec un filtre d'état ou une recherche, les logements sans bail correspondant ne sont pas listés. Pastille « Renouvelé » ajoutée.
+- **Renouveler le bail** (fiche d'un bail actif avec une date de fin, sans départ, au-dessus de « Terminer le bail ») :
+  prix (par défaut le loyer du dernier mois du bail, hausses comprises), début (lendemain de la fin), durée en mois (12) ;
+  la fin est calculée. RPC `renouveler_bail` en une transaction (passe par `creer_bail`) : mêmes locataires (même principal),
+  extras et crédits, mode, jour, inclusions ; note « Renouvellement du bail du … au … » ; réponse à l'avis = acceptée.
+  Refusé si le début n'est pas après la fin du bail actuel ou si un autre bail occupe les dates. Une fois renouvelé, la fiche
+  montre « Bail renouvelé » avec un lien vers le nouveau bail, et la notification d'avis TAL s'arrête.
+- « Changer le loyer » s'appelle maintenant **« Modifier le prix du loyer »** (même fonction).
 
 ## Thème
 

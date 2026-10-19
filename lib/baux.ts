@@ -56,3 +56,30 @@ export function periodeFichier(annees: number[]): string {
 export function moisDansAnnees(mois: string, annees: number[]): boolean {
   return annees.includes(Number(mois.slice(0, 4)));
 }
+
+// État d'un bail pour le filtre et les pastilles de l'onglet Baux (v0.9.3).
+// « Actif » couvre tous les baux en cours ; renouvelé, départ et relocation précisent un bail en cours.
+export type EtatBail = "actif" | "a_venir" | "renouvele" | "depart" | "relocation" | "termine";
+
+export const ETATS: { code: EtatBail; libelle: string }[] = [
+  { code: "actif", libelle: "Actifs" },
+  { code: "a_venir", libelle: "À venir" },
+  { code: "renouvele", libelle: "Renouvelés" },
+  { code: "depart", libelle: "Départ prévu" },
+  { code: "relocation", libelle: "Relocation faite" },
+  { code: "termine", libelle: "Terminés" },
+];
+
+/** États d'un bail : un bail en cours a « actif » plus, au besoin, renouvelé / départ / relocation.
+ *  aVenirApres = un bail à venir existe sur le même logement. */
+export function etatsBail(b: BailPeriode, aVenirApres: boolean): EtatBail[] {
+  if (b.statut !== "actif") return [b.statut];
+  if (b.date_depart) return ["actif", aVenirApres ? "relocation" : "depart"];
+  return aVenirApres ? ["actif", "renouvele"] : ["actif"];
+}
+
+/** « actif,termine » (adresse) → états connus seulement */
+export function lireEtats(texte: string | null): EtatBail[] {
+  const codes = ETATS.map((e) => e.code);
+  return (texte ?? "").split(",").filter((x): x is EtatBail => (codes as string[]).includes(x));
+}

@@ -56,7 +56,7 @@ export default function ModifierBail() {
         dateDebut: leBail.date_debut,
         duree,
         dateFinAutre: duree === "autre" ? (leBail.date_fin ?? "") : "",
-        // Loyer au début du bail : avant le premier « Changer le loyer », s'il y en a eu
+        // Loyer au début du bail : avant le premier « Modifier le prix du loyer », s'il y en a eu
         loyerSaisi: centsVersSaisie(premier ? premier.ancien_loyer_cents : leBail.loyer_cents),
         jourEcheance: String(leBail.jour_echeance),
         mode: leBail.mode_paiement as Mode,
@@ -100,7 +100,7 @@ export default function ModifierBail() {
         <>
           <p className="aide" style={{ marginTop: 0 }}>
             Corrige ici n&apos;importe quel détail du bail. Pour une hausse de loyer en cours de bail, utilise plutôt
-            « Changer le loyer » sur la fiche.
+            « Modifier le prix du loyer » sur la fiche.
             {bail.date_depart && ` Le départ du locataire (${dateLisible(bail.date_depart)}) reste inscrit.`}
           </p>
           <FormulaireBail
