@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { versCents, formatCents, centsVersSaisie } from "@/lib/argent";
-import { finApresMois, triNumero, dateLisible } from "@/lib/dates";
+import { finApresMois, triNumero, dateLisible, moisEchus, moisLisible } from "@/lib/dates";
 
 // Formulaire partagé : Nouveau bail et Modifier le bail.
 // Il valide la saisie et prépare le paramètre « p » des fonctions creer_bail,
@@ -45,7 +45,12 @@ export type BailSaisi = {
   notes: string | null;
   locataires: Record<string, string | null>[];
   extras: { libelle: string; montant_cents: number }[];
+  /** Nouveau bail seulement : mois passés à marquer payés (« 2026-07-01 »…) */
+  mois_payes?: string[];
 };
+
+/** Bail le plus récent du logement, affiché juste avant le loyer d'un nouveau bail */
+type DernierBail = { loyer_cents: number; extras_cents: number; date_debut: string; date_fin: string | null; locataires: string | null };
 
 const MODES: { code: Mode; libelle: string }[] = [
   { code: "interac", libelle: "Virement Interac" },
@@ -75,13 +80,15 @@ type Props = {
   titreLoyer?: string;
   aideLoyer?: string;
   avecPhotos: boolean;
+  /** Nouveau bail : case « Tous les mois passés sont payés » et prix du bail le plus récent */
+  nouveau?: boolean;
   texteBouton: string;
   envoi: string | null;
   setErreur: (m: string | null) => void;
   onEnregistrer: (p: BailSaisi, pages: FichierPrepare[]) => void;
 };
 
-export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPhotos, texteBouton, envoi, setErreur, onEnregistrer }: Props) {
+export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPhotos, nouveau, texteBouton, envoi, setErreur, onEnregistrer }: Props) {
   const [immeubles, setImmeubles] = useState<Immeuble[]>([]);
   const [logements, setLogements] = useState<Logement[]>([]);
   const [existants, setExistants] = useState<LocataireExistant[]>([]);
@@ -97,6 +104,10 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
   const [extras, setExtras] = useState<ExtraForm[]>(initial.extras);
   const [inclusions, setInclusions] = useState(initial.inclusions);
   const [notes, setNotes] = useState(initial.notes);
+
+  const [moisPayes, setMoisPayes] = useState(false);
+  const [moisExclus, setMoisExclus] = useState<string[]>([]);
+  const [dernierBail, setDernierBail] = useState<DernierBail | null>(null);
 
   const [pages, setPages] = useState<FichierPrepare[]>([]);
   const [traitement, setTraitement] = useState(false);
@@ -116,10 +127,23 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
     })();
   }, []);
 
+  // Prix du bail le plus récent de ce logement (nouveau bail seulement)
+  useEffect(() => {
+    setDernierBail(null);
+    if (!nouveau || !logementId) return;
+    let annule = false;
+    supabase.from("v_baux").select("loyer_cents, extras_cents, date_debut, date_fin, locataires")
+      .eq("logement_id", logementId).order("date_debut", { ascending: false }).limit(1)
+      .then(({ data }) => { if (!annule) setDernierBail(((data ?? [])[0] as DernierBail) ?? null); });
+    return () => { annule = true; };
+  }, [nouveau, logementId]);
+
   const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
   const loyerCents = versCents(loyerSaisi);
   const signe = (e: ExtraForm) => (e.credit ? -1 : 1);
   const extrasCents = extras.reduce((s, e) => s + signe(e) * (versCents(e.montantSaisi) ?? 0), 0);
+  const moisPasses = nouveau ? moisEchus(dateDebut, dateFin || null, Number(jourEcheance) || 1) : [];
+  const moisAPayer = moisPayes ? moisPasses.filter((m) => !moisExclus.includes(m)) : [];
 
   async function ajouterPages(liste: FileList | null) {
     if (!liste || liste.length === 0) return;
@@ -186,6 +210,7 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
             prenom: l.prenom, nom: l.nom, telephone: l.telephone || null, courriel: l.courriel || null,
           }),
       extras: ext.map((e) => ({ libelle: e.libelle, montant_cents: signe(e) * (versCents(e.montantSaisi) ?? 0) })),
+      ...(nouveau ? { mois_payes: moisAPayer } : {}),
     }, pages);
   }
 
@@ -271,8 +296,58 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
         {duree === "indeterminee" && <p className="aide">Les loyers dus se prolongent automatiquement chaque mois.</p>}
       </section>
 
+      {/* Mois passés déjà payés (bail entré en retard) */}
+      {moisPasses.length > 0 && (
+        <section className="carte">
+          <label className="case" style={{ marginTop: 0 }}>
+            <input type="checkbox" checked={moisPayes} onChange={(e) => setMoisPayes(e.target.checked)} />
+            <span>Tous les mois passés sont payés</span>
+          </label>
+          {moisPayes && (
+            <>
+              <p className="aide">Sauf : touche un mois pour l&apos;exclure (il restera à payer dans Loyers).</p>
+              <div className="puces">
+                {moisPasses.map((m) => {
+                  const exclu = moisExclus.includes(m);
+                  return (
+                    <span key={m} className={`puce${exclu ? "" : " actif"}`}>
+                      <button type="button" aria-pressed={!exclu}
+                              style={exclu ? { textDecoration: "line-through", color: "var(--discret)" } : undefined}
+                              onClick={() => setMoisExclus((a) => (exclu ? a.filter((x) => x !== m) : [...a, m]))}>
+                        {moisLisible(m)}
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+              <p className="aide">
+                <strong>{moisAPayer.length} mois sur {moisPasses.length}</strong> seront marqués payés dans Loyers
+                {loyerCents !== null && moisAPayer.length > 0 && <> ({formatCents((loyerCents + extrasCents) * moisAPayer.length)})</>}.
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
       {/* Loyer */}
       <section className="carte">
+        {nouveau && dernierBail && (
+          <div className="message succes" style={{ marginTop: 0 }}>
+            Prix le plus récent pour ce logement : <strong>{formatCents(dernierBail.loyer_cents)}</strong> par mois
+            {dernierBail.extras_cents !== 0 && <> (+ extras et crédits : {formatCents(dernierBail.extras_cents)})</>}
+            <span className="aide" style={{ display: "block", margin: "4px 0 0" }}>
+              Bail du {dateLisible(dernierBail.date_debut)}{dernierBail.date_fin ? ` au ${dateLisible(dernierBail.date_fin)}` : ""}
+              {dernierBail.locataires ? ` · ${dernierBail.locataires}` : ""}
+            </span>
+            {!loyerSaisi && (
+              <button type="button" className="lien-filtres" style={{ marginTop: 4 }}
+                      onClick={() => setLoyerSaisi(centsVersSaisie(dernierBail.loyer_cents))}>
+                Reprendre ce prix
+              </button>
+            )}
+          </div>
+        )}
+        {nouveau && logementId && !dernierBail && <p className="aide" style={{ marginTop: 0 }}>Aucun bail précédent pour ce logement.</p>}
         <label htmlFor="loyer">{titreLoyer ?? "Loyer mensuel"}</label>
         <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
         {aideLoyer && <p className="aide">{aideLoyer}</p>}

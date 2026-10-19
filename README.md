@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -34,6 +34,8 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 14. `supabase/014_vehicules_actifs.sql` — véhicules : marque, modèle, couleur, année, vente ; RPC `supprimer_vehicule` et
     `supprimer_immeuble` (suppression douce de tout ce qui s'y rattache) ; `v_depenses_detail` sans les immeubles supprimés ;
     nom d'immeuble unique parmi les non supprimés (v0.9.0).
+15. `supabase/015_mois_payes.sql` — RPC `marquer_mois_payes` ; `creer_bail` accepte `mois_payes` (mois passés déjà payés,
+    inscrits « reçus » au mode du bail, datés du jour d'échéance, dans la même transaction) (v0.9.1).
 
 ## 2. Lancer en local
 
@@ -105,7 +107,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `lib/fraisFixes.ts` | Types, intérêts de l'année (relevé prioritaire), statuts des versements, totaux par immeuble |
 | `app/loyers/page.tsx` | Loyers du mois par immeuble, retards (tous mois), feuille « Reçu » / partiel / annulation |
 | `app/baux/page.tsx` | Les 21 logements par immeuble avec les baux des années choisies, filtres (années, immeuble, recherche), occupation, alertes d'avis TAL |
-| `app/baux/nouveau/page.tsx` | Nouveau bail (formulaire partagé) ; pop-up si un bail couvre déjà la période (remplacement) |
+| `app/baux/nouveau/page.tsx` | Nouveau bail (formulaire partagé) ; pop-up si un bail couvre déjà la période (remplacement) ; mois passés payés et prix le plus récent (v0.9.1) |
 | `app/baux/[id]/page.tsx` | Fiche du bail : locataires (appeler / texto), conditions, fenêtre TAL, loyers dus ; « Modifier le bail », « Historique » |
 | `app/baux/[id]/modifier/page.tsx` | Modifier le bail : tous les détails (RPC modifier_bail) |
 | `app/baux/logement/[id]/page.tsx` | Historique de tous les baux d'un logement |
@@ -118,7 +120,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `lib/exportVehicule.ts` | Dossier véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais avec liens) + recus/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
-| `app/page.tsx` | Récapitulatif, navigation Mois / Année (gardée dans l'URL), liste, bouton « + » (exports : Profil > Rapport d'impôts) |
+| `app/page.tsx` | Récapitulatif, navigation Mois / Année et immeubles choisis (gardés dans l'URL : ?m= / ?a= et ?i=id1,id2), liste, bouton « + » (exports : Profil > Rapport d'impôts) |
 | `lib/periodes.ts` | Ancien calcul des périodes (plus utilisé depuis v0.8.8) |
 | `lib/exportDossier.ts` | Dossier comptable ZIP : depenses.xlsx (liens vers les reçus, onglet par catégorie) + dossier recus/ |
 | `lib/csv.ts` | Export CSV pour Excel en français (séparateur « ; », virgule décimale, UTF-8 avec BOM) |

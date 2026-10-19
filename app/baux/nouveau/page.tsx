@@ -160,6 +160,7 @@ function NouveauBail() {
       <FormulaireBail
         initial={initial}
         avecPhotos
+        nouveau
         texteBouton="Enregistrer le bail"
         envoi={envoi}
         setErreur={setErreur}

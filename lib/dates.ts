@@ -59,3 +59,19 @@ export function ajouterMois(iso: string, n: number): string {
   const dernier = new Date(a, m - 1 + n + 1, 0).getDate();
   return versIso(new Date(a, m - 1 + n, Math.min(j, dernier)));
 }
+
+/** Mois d'un bail dont le loyer est déjà dû aujourd'hui (jour d'échéance passé ou aujourd'hui) :
+ *  début 2026-07-01, jour 1, le 2026-10-19 → ["2026-07-01", "2026-08-01", "2026-09-01", "2026-10-01"] */
+export function moisEchus(debut: string, fin: string | null, jourEcheance: number): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(debut)) return [];
+  const auj = aujourdhuiIso();
+  const dernier = fin && fin < auj ? fin : auj;
+  const liste: string[] = [];
+  let mois = `${debut.slice(0, 7)}-01`;
+  while (mois <= dernier && liste.length < 600) {
+    const [a, m] = mois.split("-").map(Number);
+    if (versIso(new Date(a, m - 1, Math.max(1, jourEcheance))) <= auj) liste.push(mois);
+    mois = ajouterMois(mois, 1);
+  }
+  return liste;
+}

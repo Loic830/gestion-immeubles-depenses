@@ -36,6 +36,8 @@ type Ligne = {
 };
 
 
+type Immeuble = { id: string; nom: string };
+
 const LIMITE = 1000; // plafond par défaut de Supabase par requête
 
 export default function Accueil() {
@@ -64,13 +66,25 @@ function ListeDepenses() {
     : { debut: `${mois}-01`, fin: finDuMois(`${mois}-01`) };
   const estPeriodeCourante = mode === "annee" ? annee === Number(moisActuel.slice(0, 4)) : mois === moisActuel;
   const libellePeriode = mode === "annee" ? `Année ${annee}` : moisLisible(`${mois}-01`);
+  // Immeubles choisis, lus dans l'URL : ?i=id1,id2 (aucun = tous les immeubles)
+  const immeublesParam = params.get("i") ?? "";
+  const choisis = useMemo(() => immeublesParam.split(",").filter(Boolean), [immeublesParam]);
+
+  const [immeubles, setImmeubles] = useState<Immeuble[]>([]);
 
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  function allerA(requete: string) {
+  function allerA(periode: string, ids: string[] = choisis) {
+    const requete = [periode, ids.length ? `i=${ids.join(",")}` : ""].filter(Boolean).join("&");
     router.replace(requete ? `/?${requete}` : "/", { scroll: false });
+  }
+  const periodeActuelle = mode === "annee" ? `a=${annee}` : mois === moisActuel ? "" : `m=${mois}`;
+  function basculerImmeuble(id: string) {
+    const ids = choisis.includes(id) ? choisis.filter((x) => x !== id) : [...choisis, id];
+    // Tous cochés = aucun filtre
+    allerA(periodeActuelle, ids.length === immeubles.length ? [] : ids);
   }
   // Le mois courant et l'année courante sont les défauts : l'adresse reste « / »
   const allerMois = (m: string) => allerA(m === moisActuel ? "" : `m=${m}`);
@@ -88,21 +102,29 @@ function ListeDepenses() {
 
   useEffect(() => {
     if (!session) return;
+    supabase.from("immeubles").select("id, nom").is("deleted_at", null).order("nom")
+      .then(({ data }) => setImmeubles((data ?? []) as Immeuble[]));
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     (async () => {
       setChargement(true);
       setErreur(null);
-      const { data, error } = await supabase
+      let requete = supabase
         .from("v_depenses_detail")
         .select("*")
         .gte("date_facture", debut)
-        .lte("date_facture", fin)
+        .lte("date_facture", fin);
+      if (choisis.length) requete = requete.in("immeuble_id", choisis);
+      const { data, error } = await requete
         .order("date_facture", { ascending: false })
         .limit(LIMITE);
       if (error) setErreur(error.message);
       else setLignes((data ?? []) as Ligne[]);
       setChargement(false);
     })();
-  }, [session, debut, fin]);
+  }, [session, debut, fin, choisis]);
 
   // Totaux
   const total = lignes.reduce((s, l) => s + (l.montant_cents ?? 0), 0);
@@ -117,6 +139,8 @@ function ListeDepenses() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [lignes]);
 
+  const nomsChoisis = immeubles.filter((im) => choisis.includes(im.id)).map((im) => im.nom).join(", ");
+
   if (!pret || !session) return null;
 
   return (
@@ -130,7 +154,8 @@ function ListeDepenses() {
       {/* Totaux */}
       <section className="carte">
         <div className="total-periode">
-          <span style={{ textTransform: "capitalize" }}>{libellePeriode}</span> : <strong>{formatCents(total)}</strong>
+          <span style={{ textTransform: "capitalize" }}>{libellePeriode}</span>
+          {nomsChoisis && <> · {nomsChoisis}</>} : <strong>{formatCents(total)}</strong>
           {nbBrouillons > 0 && <> · <span className="pastille">{nbBrouillons} à compléter</span></>}
         </div>
         {totalCapital > 0 && (
@@ -176,6 +201,24 @@ function ListeDepenses() {
           </button>
         )}
       </section>
+
+      {/* Immeubles */}
+      {immeubles.length > 1 && (
+        <section className="carte">
+          <strong>Immeubles</strong>
+          <div className="puces">
+            <span className={`puce${choisis.length === 0 ? " actif" : ""}`}>
+              <button type="button" aria-pressed={choisis.length === 0} onClick={() => allerA(periodeActuelle, [])}>Tous</button>
+            </span>
+            {immeubles.map((im) => (
+              <span key={im.id} className={`puce${choisis.includes(im.id) ? " actif" : ""}`}>
+                <button type="button" aria-pressed={choisis.includes(im.id)} onClick={() => basculerImmeuble(im.id)}>{im.nom}</button>
+              </span>
+            ))}
+          </div>
+          <p className="aide">Touche un ou plusieurs immeubles pour voir seulement leurs dépenses.</p>
+        </section>
+      )}
 
       {/* Liste */}
       <div className="carte">
