@@ -5,10 +5,14 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { aujourdhuiIso, dateLisible } from "@/lib/dates";
+import { nomVehicule, type FicheVehicule } from "@/lib/vehicule";
 import BarreOnglets from "@/components/BarreOnglets";
+import FormulaireVehicule from "@/components/FormulaireVehicule";
+import RapportImpots from "@/components/RapportImpots";
 
-// Profil : mon compte (nom, cellulaire, courriel, mot de passe, déconnexion)
-// et Actifs (immeubles : ajouter, ouvrir le détail, voir les immeubles vendus).
+// Profil : mon compte (nom, cellulaire, courriel, mot de passe, déconnexion),
+// Actifs séparés en Immeubles et Véhicules (ajouter, ouvrir le détail, voir les vendus),
+// Rapport d'impôts (exports de l'année, v0.9.0).
 // En bas : « Tester les notifications possibles » (v0.8.9).
 
 type Immeuble = {
@@ -19,6 +23,7 @@ type Immeuble = {
   date_acquisition: string | null;
   date_vente: string | null;
 };
+type Vehicule = Pick<FicheVehicule, "id" | "nom" | "marque" | "modele" | "couleur" | "annee" | "actif" | "date_vente">;
 
 export default function PageProfil() {
   const { session, pret } = useSession();
@@ -43,6 +48,9 @@ export default function PageProfil() {
   const [nvDate, setNvDate] = useState(aujourdhuiIso());
   const [nvNb, setNvNb] = useState("");
   const [actifsMsg, setActifsMsg] = useState<string | null>(null);
+  const [vehicules, setVehicules] = useState<Vehicule[]>([]);
+  const [voirVehiculesVendus, setVoirVehiculesVendus] = useState(false);
+  const [ajoutVehicule, setAjoutVehicule] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -51,6 +59,7 @@ export default function PageProfil() {
     setCellulaire((u.user_metadata?.cellulaire as string | undefined) ?? "");
     setCourriel(u.email ?? "");
     chargerImmeubles();
+    chargerVehicules();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
@@ -72,6 +81,15 @@ export default function PageProfil() {
     const compte: Record<string, number> = {};
     for (const l of (lg.data ?? []) as { immeuble_id: string }[]) compte[l.immeuble_id] = (compte[l.immeuble_id] ?? 0) + 1;
     setNbLogements(compte);
+  }
+
+  async function chargerVehicules() {
+    const ve = await supabase.from("vehicules").select("id, nom, marque, modele, couleur, annee, actif, date_vente")
+      .is("deleted_at", null).order("created_at");
+    if (!ve.error) return setVehicules((ve.data ?? []) as Vehicule[]);
+    // Migration 014 pas encore exécutée : seulement le nom
+    const repli = await supabase.from("vehicules").select("id, nom, actif").is("deleted_at", null).order("created_at");
+    setVehicules(((repli.data ?? []) as Vehicule[]).map((v) => ({ ...v, date_vente: null })));
   }
 
   async function enregistrerCompte(e: React.FormEvent) {
@@ -142,6 +160,10 @@ export default function PageProfil() {
     .filter((i) => voirVendus || i.actif)
     .sort((a, b) => Number(b.actif) - Number(a.actif) || a.nom.localeCompare(b.nom, "fr-CA"));
   const nbVendus = immeubles.filter((i) => !i.actif).length;
+  const vehiculesAffiches = vehicules
+    .filter((v) => voirVehiculesVendus || v.actif)
+    .sort((a, b) => Number(b.actif) - Number(a.actif));
+  const nbVehiculesVendus = vehicules.filter((v) => !v.actif).length;
 
   return (
     <main className="page avec-onglets">
@@ -181,8 +203,9 @@ export default function PageProfil() {
         </form>
       </details>
 
-      <div className="entete" style={{ margin: "24px 0 8px" }}>
-        <h2 className="immeuble-titre" style={{ margin: 0 }}>Actifs</h2>
+      <h2 className="immeuble-titre" style={{ margin: "24px 0 0" }}>Actifs</h2>
+      <div className="entete" style={{ margin: "8px 0" }}>
+        <h3 className="sous-titre-actifs" style={{ margin: 0 }}>Immeubles</h3>
         {!ajout && <button className="bouton" onClick={() => setAjout(true)}>+ Ajouter</button>}
       </div>
 
@@ -233,6 +256,43 @@ export default function PageProfil() {
           {voirVendus ? "Cacher les immeubles vendus" : `Afficher les immeubles vendus (${nbVendus})`}
         </button>
       )}
+
+      <div className="entete" style={{ margin: "16px 0 8px" }}>
+        <h3 className="sous-titre-actifs" style={{ margin: 0 }}>Véhicules</h3>
+        {!ajoutVehicule && <button className="bouton" onClick={() => setAjoutVehicule(true)}>+ Ajouter</button>}
+      </div>
+      {ajoutVehicule && (
+        <div className="carte">
+          <FormulaireVehicule
+            onAnnuler={() => setAjoutVehicule(false)}
+            onEnregistre={async () => { setAjoutVehicule(false); await chargerVehicules(); }}
+          />
+        </div>
+      )}
+      <div className="carte">
+        {vehiculesAffiches.length === 0 && <p className="aide">Aucun véhicule.</p>}
+        {vehiculesAffiches.map((v) => (
+          <Link key={v.id} href={`/profil/vehicules/${v.id}`} className="ligne-actif">
+            <div className="infos">
+              <div className="titre">{nomVehicule(v)}</div>
+              <div className="sous">
+                {v.annee ? `Année ${v.annee}` : "Année à compléter"}
+                {!v.actif && v.date_vente ? ` · vendu le ${dateLisible(v.date_vente)}` : ""}
+              </div>
+            </div>
+            {!v.actif && <span className="pastille vendu">Vendu</span>}
+            <span aria-hidden="true">›</span>
+          </Link>
+        ))}
+      </div>
+      {nbVehiculesVendus > 0 && (
+        <button className="lien-filtres" onClick={() => setVoirVehiculesVendus(!voirVehiculesVendus)}>
+          {voirVehiculesVendus ? "Cacher les véhicules vendus" : `Afficher les véhicules vendus (${nbVehiculesVendus})`}
+        </button>
+      )}
+
+      <h2 className="immeuble-titre" style={{ margin: "24px 0 8px" }}>Rapport d&apos;impôts</h2>
+      <RapportImpots />
 
       <div style={{ marginTop: 32 }}>
         <Link href="/profil/notifications" className="bouton plein" style={{ marginBottom: 12 }}>

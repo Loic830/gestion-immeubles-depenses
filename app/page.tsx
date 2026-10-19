@@ -7,8 +7,6 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { ajouterMois, aujourdhuiIso, finDuMois, moisLisible } from "@/lib/dates";
-import { genererCsv, montantCsv, telechargerFichier } from "@/lib/csv";
-import { exporterDossier } from "@/lib/exportDossier";
 import BarreOnglets from "@/components/BarreOnglets";
 
 type Ligne = {
@@ -70,11 +68,8 @@ function ListeDepenses() {
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [exportEnCours, setExportEnCours] = useState<string | null>(null);
-  const [exportResultat, setExportResultat] = useState<string | null>(null);
 
   function allerA(requete: string) {
-    setExportResultat(null);
     router.replace(requete ? `/?${requete}` : "/", { scroll: false });
   }
   // Le mois courant et l'année courante sont les défauts : l'adresse reste « / »
@@ -122,44 +117,6 @@ function ListeDepenses() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [lignes]);
 
-  function exporter() {
-    const entetes = [
-      "Date", "Fournisseur", "Immeuble", "Logement", "Catégorie", "Catégorie principale", "Ligne T776",
-      "Nature", "Montant", "Avant taxes", "TPS", "TVQ", "Total facture", "Paiement", "No facture",
-      "Statut", "Description", "Notes", "Nb reçus",
-    ];
-    const rangs = lignes.map((l) => [
-      l.date_facture, l.fournisseur, l.immeuble, l.logement, l.categorie, l.categorie_parent ?? l.categorie,
-      l.code_fiscal, l.nature, montantCsv(l.montant_cents), montantCsv(l.sous_total_cents),
-      montantCsv(l.tps_cents), montantCsv(l.tvq_cents), montantCsv(l.total_cents), l.mode_paiement,
-      l.no_facture, l.statut, l.description, l.notes, l.nb_pieces,
-    ]);
-    const nom = `depenses_${debut}_${fin}.csv`;
-    telechargerFichier(genererCsv(entetes, rangs), nom);
-  }
-
-  async function exporterAvecRecus() {
-    setExportResultat(null);
-    setErreur(null);
-    try {
-      // Année complète : frais de véhicule inclus
-      const r = await exporterDossier(
-        lignes, `dossier_depenses_${debut}_${fin}.zip`, setExportEnCours,
-        mode === "annee" ? { annee, immeubleIds: [] } : null,
-      );
-      const vehicule = r.vehiculeCents ? ` Frais de véhicule inclus : ${formatCents(r.vehiculeCents)}.` : "";
-      setExportResultat(
-        r.manquants
-          ? `Dossier créé : ${r.nbRecus} reçus, ${r.manquants} introuvable(s) (voir RECUS_MANQUANTS.txt).${vehicule}`
-          : `Dossier créé avec ${r.nbRecus} reçu(s).${vehicule} Décompresse le ZIP avant d'ouvrir le fichier Excel.`
-      );
-    } catch (e) {
-      setErreur(`Export impossible : ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setExportEnCours(null);
-    }
-  }
-
   if (!pret || !session) return null;
 
   return (
@@ -192,18 +149,6 @@ function ListeDepenses() {
             ))}
           </div>
         )}
-        {lignes.length > 0 && (
-          <>
-            <button className="bouton principal plein" style={{ marginTop: 12 }}
-                    onClick={exporterAvecRecus} disabled={exportEnCours !== null}>
-              {exportEnCours ?? "Exporter Excel + reçus (ZIP)"}
-            </button>
-            <button className="bouton plein" style={{ marginTop: 8 }} onClick={exporter} disabled={exportEnCours !== null}>
-              Exporter en CSV seulement
-            </button>
-          </>
-        )}
-        {exportResultat && <p className="aide" style={{ color: "var(--succes)" }}>{exportResultat}</p>}
         {lignes.length >= LIMITE && (
           <p className="aide">Affichage limité aux {LIMITE} lignes les plus récentes : passe en mode Mois.</p>
         )}

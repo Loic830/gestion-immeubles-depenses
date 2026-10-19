@@ -6,14 +6,17 @@ import { useSession } from "@/lib/useSession";
 import { formatCents, versCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible } from "@/lib/dates";
 import { preparerFichier, type FichierPrepare } from "@/lib/image";
-import { calculerResume, TYPES_FRAIS, MOTIFS, formatKm, type ImmeubleVeh } from "@/lib/vehicule";
+import { calculerResume, TYPES_FRAIS, MOTIFS, formatKm, nomVehicule, type FicheVehicule, type ImmeubleVeh } from "@/lib/vehicule";
 import BarreOnglets from "@/components/BarreOnglets";
 import ConstructeurTrajet, { type TrajetCompose } from "@/components/ConstructeurTrajet";
+import FormulaireVehicule from "@/components/FormulaireVehicule";
 
-// Véhicule : journal de bord (km pour les immeubles), frais et relevés du compteur.
+// Véhicules : journal de bord (km pour les immeubles), frais et relevés du compteur, par véhicule.
+// Flèches ‹ › en haut pour passer d'un véhicule à l'autre (v0.9.0).
 // La part déductible = frais × (km immeubles / km totaux), répartie entre les immeubles.
+// L'export pour le comptable est dans Profil > Rapport d'impôts.
 
-type Vehicule = { id: string; nom: string };
+type Vehicule = Pick<FicheVehicule, "id" | "nom" | "marque" | "modele" | "couleur" | "annee" | "actif" | "date_vente">;
 type Favori = { id: string; nom: string; km: number; immeuble_id: string | null; motif: string | null };
 type Releve = { id: string; date_releve: string; km: number; note: string | null };
 type Deplacement = { id: string; date_trajet: string; km: number; immeuble_id: string | null; motif: string; destination: string | null };
@@ -32,6 +35,14 @@ function lireKm(t: string): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 10) / 10 : null;
 }
 
+/** Véhicules non supprimés ; sans la migration 014, seulement le nom. */
+async function chargerVehicules() {
+  const r = await supabase.from("vehicules").select("id, nom, marque, modele, couleur, annee, actif, date_vente")
+    .is("deleted_at", null).order("created_at");
+  if (!r.error) return r;
+  return supabase.from("vehicules").select("id, nom, actif").is("deleted_at", null).eq("actif", true).order("created_at");
+}
+
 export default function PageVehicule() {
   const { session, pret } = useSession();
   const [vehicules, setVehicules] = useState<Vehicule[]>([]);
@@ -47,11 +58,10 @@ export default function PageVehicule() {
   const [erreur, setErreur] = useState<string | null>(null);
   const [succes, setSucces] = useState<string | null>(null);
   const [envoi, setEnvoi] = useState(false);
-  const [exportEtape, setExportEtape] = useState<string | null>(null);
   const [toutVoir, setToutVoir] = useState(false);
 
   // Nouveau véhicule
-  const [nomVehicule, setNomVehicule] = useState("");
+  const [ajoutVehicule, setAjoutVehicule] = useState(false);
 
   // Trajet
   const [dateTrajet, setDateTrajet] = useState(aujourdhuiIso());
@@ -60,6 +70,7 @@ export default function PageVehicule() {
   const [motif, setMotif] = useState("");
   const [destination, setDestination] = useState("");
   const [garderFavori, setGarderFavori] = useState(false);
+  const [favoriChoisi, setFavoriChoisi] = useState<string | null>(null);
   const [composer, setComposer] = useState(false);
   const [etapesCompose, setEtapesCompose] = useState<string[] | null>(null);
 
@@ -80,13 +91,14 @@ export default function PageVehicule() {
 
   const chargerBase = useCallback(async () => {
     const [ve, im, fa] = await Promise.all([
-      supabase.from("vehicules").select("id, nom").is("deleted_at", null).eq("actif", true).order("created_at"),
+      chargerVehicules(),
       supabase.from("immeubles").select("id, nom, nb_logements").is("deleted_at", null).eq("actif", true).order("nom"),
       supabase.from("trajets_favoris").select("id, nom, km, immeuble_id, motif").is("deleted_at", null).order("nom"),
     ]);
     const err = [ve, im, fa].find((r) => r.error)?.error;
     if (err) { setErreur(err.message); setChargement(false); return; }
-    const liste = (ve.data ?? []) as Vehicule[];
+    // Véhicules en usage d'abord, puis les vendus (pour revoir leurs années passées)
+    const liste = ((ve.data ?? []) as Vehicule[]).sort((a, b) => Number(b.actif) - Number(a.actif));
     setVehicules(liste);
     setImmeubles((im.data ?? []) as ImmeubleVeh[]);
     setFavoris(((fa.data ?? []) as Favori[]).map((f) => ({ ...f, km: Number(f.km) })));
@@ -124,24 +136,41 @@ export default function PageVehicule() {
     [annee, releves, trajets, frais, immeubles],
   );
 
+  // Le trajet est déjà dans la liste des trajets fréquents : la case « Garder comme trajet fréquent » disparaît
+  const kmSaisi = lireKm(kmTrajet);
+  const dejaFrequent = favoriChoisi !== null || favoris.some((f) => f.nom === destination.trim() && f.km === kmSaisi);
+
   function confirmer(texte: string) {
     setSucces(texte);
     setTimeout(() => setSucces(null), 3500);
   }
 
-  async function creerVehicule() {
-    if (!nomVehicule.trim()) return setErreur("Donne un nom au véhicule (ex. Silverado 2019).");
-    setErreur(null);
-    const { data, error } = await supabase.from("vehicules").insert({ nom: nomVehicule.trim() }).select("id").single();
-    if (error) return setErreur(error.message);
-    setNomVehicule("");
-    ecrire(CLE_VEHICULE, data.id);
-    setVehiculeId(data.id);
+  async function vehiculeAjoute(id: string) {
+    setAjoutVehicule(false);
+    ecrire(CLE_VEHICULE, id);
+    setVehiculeId(id);
     await chargerBase();
     setOnglet("compteur");
+    confirmer("Véhicule ajouté. Inscris le compteur pour commencer.");
   }
 
+  function changerVehicule(n: number) {
+    const i = vehicules.findIndex((v) => v.id === vehiculeId);
+    const suivant = vehicules[(i + n + vehicules.length) % vehicules.length];
+    if (!suivant || suivant.id === vehiculeId) return;
+    setVehiculeId(suivant.id);
+    ecrire(CLE_VEHICULE, suivant.id);
+    setToutVoir(false);
+  }
+
+  function viderTrajet() {
+    setKmTrajet(""); setDestination(""); setGarderFavori(false); setEtapesCompose(null); setFavoriChoisi(null);
+  }
+
+  // Toucher un trajet fréquent le choisit (bouton coloré, immeuble caché) ; le toucher encore le retire
   function choisirFavori(f: Favori) {
+    if (favoriChoisi === f.id) return viderTrajet();
+    setFavoriChoisi(f.id);
     setKmTrajet(String(f.km).replace(".", ","));
     setImmeubleTrajet(f.immeuble_id ?? "");
     setMotif(f.motif ?? motif);
@@ -150,12 +179,20 @@ export default function PageVehicule() {
     setEtapesCompose(null);
   }
 
+  function ouvrirComposer() {
+    viderTrajet();
+    setComposer(true);
+  }
+
   function utiliserCompose(t: TrajetCompose) {
     setKmTrajet(String(t.km).replace(".", ","));
     setDestination(t.nom);
     setImmeubleTrajet(t.immeubleId);
     setEtapesCompose(t.etapes);
-    setGarderFavori(!favoris.some((f) => f.nom === t.nom));
+    // Trajet composé identique à un trajet fréquent : on le choisit (la case « Garder » disparaît)
+    const existant = favoris.find((f) => f.nom === t.nom && f.km === t.km);
+    setFavoriChoisi(existant?.id ?? null);
+    setGarderFavori(false);
     setComposer(false);
   }
 
@@ -163,6 +200,7 @@ export default function PageVehicule() {
     if (!window.confirm(`Retirer le trajet fréquent « ${f.nom} » ? (les trajets déjà inscrits restent)`)) return;
     await supabase.from("trajets_favoris").update({ deleted_at: new Date().toISOString() }).eq("id", f.id);
     setFavoris((l) => l.filter((x) => x.id !== f.id));
+    if (favoriChoisi === f.id) viderTrajet();
   }
 
   async function enregistrerTrajet() {
@@ -175,7 +213,7 @@ export default function PageVehicule() {
       vehicule_id: vehiculeId, date_trajet: dateTrajet, km, immeuble_id: immeubleTrajet || null,
       motif: motif.trim(), destination: destination.trim() || null,
     });
-    if (!error && garderFavori) {
+    if (!error && garderFavori && !dejaFrequent) {
       const nomFav = destination.trim() || (immeubles.find((i) => i.id === immeubleTrajet)?.nom ?? "Trajet");
       await supabase.from("trajets_favoris").insert({
         nom: nomFav, km, immeuble_id: immeubleTrajet || null, motif: motif.trim(), etapes: etapesCompose,
@@ -184,7 +222,7 @@ export default function PageVehicule() {
     }
     setEnvoi(false);
     if (error) return setErreur(error.message);
-    setKmTrajet(""); setDestination(""); setGarderFavori(false); setEtapesCompose(null);
+    viderTrajet();
     if (dateTrajet.slice(0, 4) !== String(annee)) setAnnee(Number(dateTrajet.slice(0, 4)));
     else await chargerVehicule();
     confirmer(`Trajet de ${formatKm(km)} inscrit.`);
@@ -269,20 +307,6 @@ export default function PageVehicule() {
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   }
 
-  async function exporter() {
-    const v = vehicules.find((x) => x.id === vehiculeId);
-    if (!v) return;
-    setErreur(null);
-    try {
-      const r = await exporterDossierVehiculeDiffere(v, annee, immeubles, setExportEtape);
-      confirmer(`Dossier ${annee} exporté : ${r.trajets} trajets, ${r.frais} frais${r.manquants ? `, ${r.manquants} reçu(s) manquant(s)` : ""}.`);
-    } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
-    } finally {
-      setExportEtape(null);
-    }
-  }
-
   if (!pret || !session) return null;
 
   const nomImmeuble = (id: string | null) => (id ? immeubles.find((i) => i.id === id)?.nom ?? "" : "Plusieurs immeubles");
@@ -290,17 +314,17 @@ export default function PageVehicule() {
   const anneeCourante = new Date().getFullYear();
   const releveDebutManquant = resume.kmDebut === null;
   const trajetsAffiches = toutVoir ? trajets : trajets.slice(0, 15);
+  const vehicule = vehicules.find((v) => v.id === vehiculeId);
+  const detailsVehicule = [
+    vehicule?.annee ? String(vehicule.annee) : "",
+    vehicule && !vehicule.actif ? `Vendu${vehicule.date_vente ? ` le ${dateLisible(vehicule.date_vente)}` : ""}` : "",
+    vehicules.length > 1 ? `${vehicules.findIndex((v) => v.id === vehiculeId) + 1} de ${vehicules.length}` : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <main className="page avec-onglets">
       <div className="entete">
-        <h1>Véhicule</h1>
-        {vehicules.length > 1 && (
-          <select value={vehiculeId} aria-label="Véhicule" style={{ width: "auto" }}
-                  onChange={(e) => { setVehiculeId(e.target.value); ecrire(CLE_VEHICULE, e.target.value); }}>
-            {vehicules.map((v) => <option key={v.id} value={v.id}>{v.nom}</option>)}
-          </select>
-        )}
+        <h1>Véhicules</h1>
       </div>
 
       {erreur && <div className="message erreur">{erreur}</div>}
@@ -314,9 +338,29 @@ export default function PageVehicule() {
             Pour déduire les frais de véhicule au prorata : inscris chaque déplacement pour les immeubles,
             les frais (essence, entretien, assurance…) et le compteur au début et à la fin de l&apos;année.
           </p>
-          <label htmlFor="nom-vehicule">Nom du véhicule</label>
-          <input id="nom-vehicule" placeholder="ex. Silverado 2019" value={nomVehicule} onChange={(e) => setNomVehicule(e.target.value)} />
-          <button className="bouton principal plein" style={{ marginTop: 12 }} onClick={creerVehicule}>Ajouter</button>
+          <FormulaireVehicule onEnregistre={vehiculeAjoute} />
+        </section>
+      )}
+
+      {/* Choix du véhicule : flèches ‹ › et nom au centre */}
+      {!chargement && vehicules.length > 0 && (
+        <section className="carte">
+          <div className="selecteur-mois selecteur-vehicule">
+            <button className="bouton" onClick={() => changerVehicule(-1)} aria-label="Véhicule précédent" disabled={vehicules.length < 2}>‹</button>
+            <div className="nom-vehicule">
+              <strong>{vehicule ? nomVehicule(vehicule) : ""}</strong>
+              {detailsVehicule && <span className="aide">{detailsVehicule}</span>}
+            </div>
+            <button className="bouton" onClick={() => changerVehicule(1)} aria-label="Véhicule suivant" disabled={vehicules.length < 2}>›</button>
+          </div>
+          {ajoutVehicule ? (
+            <div className="bloc-locataire">
+              <strong>Nouveau véhicule</strong>
+              <FormulaireVehicule onEnregistre={vehiculeAjoute} onAnnuler={() => setAjoutVehicule(false)} />
+            </div>
+          ) : (
+            <button className="lien-filtres" style={{ margin: "8px auto 0" }} onClick={() => setAjoutVehicule(true)}>+ Ajouter un véhicule</button>
+          )}
         </section>
       )}
 
@@ -327,8 +371,11 @@ export default function PageVehicule() {
             <div className="selecteur-mois">
               <button className="bouton" onClick={() => setAnnee(annee - 1)} aria-label="Année précédente">‹</button>
               <strong>{annee}</strong>
-              <button className="bouton" onClick={() => setAnnee(annee + 1)} aria-label="Année suivante" disabled={annee >= anneeCourante}>›</button>
+              <button className="bouton" onClick={() => setAnnee(annee + 1)} aria-label="Année suivante">›</button>
             </div>
+            {annee !== anneeCourante && (
+              <button className="lien-filtres" style={{ margin: "8px auto 0" }} onClick={() => setAnnee(anneeCourante)}>Revenir à l&apos;année courante</button>
+            )}
 
             <div className="total-periode" style={{ marginTop: 12 }}>
               Usage pour les immeubles :{" "}
@@ -361,9 +408,6 @@ export default function PageVehicule() {
                 Le journal compte plus de km que le compteur : vérifie les relevés ou un trajet en double.
               </div>
             )}
-            <button className="bouton plein" style={{ marginTop: 12 }} onClick={exporter} disabled={exportEtape !== null}>
-              {exportEtape ?? `Exporter ${annee} pour le comptable (Excel + reçus)`}
-            </button>
           </section>
 
           {/* Saisie */}
@@ -382,30 +426,34 @@ export default function PageVehicule() {
                   onFermer={() => setComposer(false)}
                 />
               ) : (
-                <button type="button" className="bouton plein" style={{ marginBottom: 12 }} onClick={() => setComposer(true)}>
-                  Composer un trajet (Maison → Gauthier → Rona…)
-                </button>
-              )}
-              {!composer && favoris.length > 0 && (
                 <>
                   <strong>Trajets fréquents</strong>
                   <div className="puces">
                     {favoris.map((f) => (
-                      <span key={f.id} className="puce">
-                        <button type="button" onClick={() => choisirFavori(f)}>{f.nom} · {formatKm(f.km)}</button>
+                      <span key={f.id} className={`puce${favoriChoisi === f.id ? " actif" : ""}`}>
+                        <button type="button" aria-pressed={favoriChoisi === f.id} onClick={() => choisirFavori(f)}>{f.nom} · {formatKm(f.km)}</button>
                         <button type="button" className="puce-retirer" aria-label={`Retirer ${f.nom}`} onClick={() => retirerFavori(f)}>×</button>
                       </span>
                     ))}
+                    <span className="puce composer">
+                      <button type="button" onClick={ouvrirComposer}>Composer un trajet (Maison → Bloc → Rona…)</button>
+                    </span>
                   </div>
                 </>
               )}
-              <label>Immeuble</label>
-              <div className="choix-2">
-                {immeubles.map((im) => (
-                  <button key={im.id} type="button" className={immeubleTrajet === im.id ? "actif" : ""} onClick={() => setImmeubleTrajet(im.id)}>{im.nom}</button>
-                ))}
-                <button type="button" className={immeubleTrajet === "" ? "actif" : ""} onClick={() => setImmeubleTrajet("")}>Plusieurs</button>
-              </div>
+              {favoriChoisi ? (
+                <p className="aide">Immeuble : {nomImmeuble(immeubleTrajet || null)} (touche encore le trajet pour le retirer)</p>
+              ) : (
+                <>
+                  <label>Immeuble</label>
+                  <div className="choix-2">
+                    {immeubles.map((im) => (
+                      <button key={im.id} type="button" className={immeubleTrajet === im.id ? "actif" : ""} onClick={() => setImmeubleTrajet(im.id)}>{im.nom}</button>
+                    ))}
+                    <button type="button" className={immeubleTrajet === "" ? "actif" : ""} onClick={() => setImmeubleTrajet("")}>Plusieurs</button>
+                  </div>
+                </>
+              )}
               <div className="rangee" style={{ marginTop: 8 }}>
                 <div>
                   <label htmlFor="km-trajet">Km aller-retour</label>
@@ -427,10 +475,12 @@ export default function PageVehicule() {
               <input aria-label="Motif" placeholder="ou écrire un autre motif" value={motif} onChange={(e) => setMotif(e.target.value)} style={{ marginTop: 8 }} />
               <label htmlFor="destination">Destination / détail (facultatif)</label>
               <input id="destination" placeholder="ex. Maison → Gauthier → BMR" value={destination} onChange={(e) => setDestination(e.target.value)} />
-              <label className="case">
-                <input type="checkbox" checked={garderFavori} onChange={(e) => setGarderFavori(e.target.checked)} />
-                Garder comme trajet fréquent
-              </label>
+              {!dejaFrequent && (
+                <label className="case">
+                  <input type="checkbox" checked={garderFavori} onChange={(e) => setGarderFavori(e.target.checked)} />
+                  Garder comme trajet fréquent
+                </label>
+              )}
               <button className="bouton principal plein" style={{ marginTop: 12 }} onClick={enregistrerTrajet} disabled={envoi}>
                 {envoi ? "Enregistrement…" : "Inscrire le trajet"}
               </button>
@@ -575,15 +625,6 @@ export default function PageVehicule() {
               L&apos;amortissement du véhicule (DPA, catégorie 10 ou 10.1) n&apos;est pas calculé ici : ton comptable l&apos;ajoute
               à partir du coût d&apos;achat. Il ne peut pas créer ni augmenter une perte de location.
             </p>
-            {vehicules.length > 0 && (
-              <div className="bloc-locataire">
-                <label htmlFor="autre-vehicule">Ajouter un autre véhicule</label>
-                <div className="rangee">
-                  <input id="autre-vehicule" placeholder="Nom du véhicule" value={nomVehicule} onChange={(e) => setNomVehicule(e.target.value)} />
-                  <button className="bouton" style={{ flex: "0 0 auto" }} onClick={creerVehicule}>Ajouter</button>
-                </div>
-              </div>
-            )}
           </details>
         </>
       )}
@@ -591,10 +632,4 @@ export default function PageVehicule() {
       <BarreOnglets />
     </main>
   );
-}
-
-// ExcelJS et JSZip ne sont chargés qu'au clic
-async function exporterDossierVehiculeDiffere(...args: Parameters<typeof import("@/lib/exportVehicule").exporterDossierVehicule>) {
-  const { exporterDossierVehicule } = await import("@/lib/exportVehicule");
-  return exporterDossierVehicule(...args);
 }

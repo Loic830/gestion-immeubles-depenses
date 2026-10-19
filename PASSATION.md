@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.8.9**.
+> ou par une nouvelle conversation avec Claude. État au **18 octobre 2026**, version **0.9.0**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -23,13 +23,13 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 - **Comptable** : reçoit les exports annuels (T776 fédéral, TP-128 Québec).
 
 **Ce que l'app fait aujourd'hui** : en-tête « Immeubles So-Max » (cloche, avatar → Profil et Actifs) et
-5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicule.
+5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicules.
 1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois).
-2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8, filtres retirés), export CSV, dossier comptable (Excel + reçus en ZIP, frais de véhicule inclus sur une année complète).
+2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8, filtres retirés). Les exports sont dans Profil > Rapport d'impôts (v0.9.0).
 3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7).
-4. **Véhicule** 🚗 : journal de bord (km), trajets fréquents composés de lieux, frais du véhicule, relevés du compteur, prorata déductible par immeuble, export.
+4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
-6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs (ajout d'immeuble, logements, vente) ; en bas, « Tester les notifications possibles » (v0.8.9).
+6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs séparés en **Immeubles** (ajout, logements, vente, « Supprimer cet immeuble de partout ») et **Véhicules** (ajout, modification, vente, suppression) ; **Rapport d'impôts** (v0.9.0) : année + dépenses et reçus (ZIP), CSV, dossier de chaque véhicule ; en bas, « Tester les notifications possibles » (v0.8.9).
 7. **Notifications** 🔔 (v0.8.9) : cloche jaune-orangé s'il y a du non lu ; tiroir (plus récent en haut, contour jaune-orangé = non lue, toucher = lue / non lue) ; préférences par type et par immeuble ou véhicule ; notifications poussées sur l'iPhone (Web Push, app sur l'écran d'accueil).
 
 ---
@@ -87,8 +87,9 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 011 | `011_frais_fixes.sql` | `hypotheques`, `hypotheque_releves`, `assurances`, `taxes_versements` ; `documents.bail_id` facultatif + type `assurance` ; RPC `payer_frais_fixe`, `annuler_paiement_frais_fixe` (v0.8.6) | **à confirmer** |
 | 012 | `012_modifier_bail.sql` | `documents.deleted_at` ; RPC `modifier_bail`, `creer_bail_en_remplacement` (v0.8.7) | **à exécuter** |
 | 013 | `013_notifications.sql` | `notifications` (lue_le, poussee_le, cle unique), `notifications_exclusions`, `abonnements_push` (RLS : chacun ses lignes) ; `alertes_du_jour()`, `generer_notifications()` ; aides `date_fr`, `cents_fr`, `de_mois_fr` (v0.8.9) | **à exécuter** |
+| 014 | `014_vehicules_actifs.sql` | `vehicules` : marque, modele, couleur, annee, date_vente, prix_vente_cents ; RPC `supprimer_vehicule`, `supprimer_immeuble` (security definer, suppression douce en cascade) ; `v_depenses_detail` filtre `immeubles.deleted_at` ; index unique partiel sur `immeubles.nom` (v0.9.0) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `014_…`.
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `015_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
@@ -107,7 +108,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 ## 4. Carte des fichiers
 
-**Attention : il y a 16 fichiers `page.tsx`.** Ne jamais se fier au nom du fichier seul ; chacun se reconnaît
+**Attention : il y a 17 fichiers `page.tsx`.** Ne jamais se fier au nom du fichier seul ; chacun se reconnaît
 à sa ligne `export default function` :
 
 | Chemin | Écran | `export default function` |
@@ -122,11 +123,12 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `app/baux/[id]/page.tsx` | fiche du bail | `DetailBail` |
 | `app/baux/[id]/modifier/page.tsx` | modifier le bail (v0.8.7) | `ModifierBail` |
 | `app/baux/logement/[id]/page.tsx` | historique des baux d'un logement (v0.8.7) | `HistoriqueLogement` |
-| `app/vehicule/page.tsx` | onglet **Véhicule** | `PageVehicule` |
+| `app/vehicule/page.tsx` | onglet **Véhicules** | `PageVehicule` |
 | `app/login/page.tsx` | connexion | `PageConnexion` |
 | `app/frais-fixes/page.tsx` | onglet **Frais fixes** | `PageFraisFixes` |
-| `app/profil/page.tsx` | Profil et Actifs | `PageProfil` |
+| `app/profil/page.tsx` | Profil, Actifs (Immeubles, Véhicules), Rapport d'impôts | `PageProfil` |
 | `app/profil/immeubles/[id]/page.tsx` | détail d'un immeuble | `PageDetailImmeuble` |
+| `app/profil/vehicules/[id]/page.tsx` | détail d'un véhicule : modifier, vendre, supprimer (v0.9.0) | `PageDetailVehicule` |
 | `app/profil/notifications/page.tsx` | Tester les notifications possibles (v0.8.9) | `PageTestNotifications` |
 
 **Composants et bibliothèques**
@@ -239,6 +241,13 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 **À faire par Loïc (v0.8.9)**
 - Exécuter `013_notifications.sql`, faire `npm install` (nouvelle dépendance `web-push`), puis configurer les 5 variables
   des notifications poussées dans Vercel (README > « Notifications poussées »). Sans elles, la cloche fonctionne mais rien n'arrive sur le téléphone.
+
+**À faire par Loïc (v0.9.0)**
+- Exécuter `014_vehicules_actifs.sql`. Ensuite, ouvrir Profil > Actifs > Véhicules > le véhicule existant et remplir
+  marque, modèle, couleur, année (son nom affiché devient « marque modèle couleur »).
+
+**Choix faits en 0.9.0** : « supprimer de partout » = suppression douce (`deleted_at`) avec confirmation (nom à écrire),
+jamais d'effacement définitif. Les années futures sont permises dans l'onglet Véhicules. Rapport d'impôts : année courante par défaut.
 
 **Feuille de route**
 1. **v0.8.x** : série de chèques postdatés en un geste, confirmation des prélèvements, chèques sans provision, reçu pour paiement comptant.

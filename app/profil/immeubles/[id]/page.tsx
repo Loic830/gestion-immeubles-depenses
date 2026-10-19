@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { aujourdhuiIso, dateLisible, triNumero } from "@/lib/dates";
@@ -10,8 +10,10 @@ import { centsVersSaisie, formatCents, versCents } from "@/lib/argent";
 import BarreOnglets from "@/components/BarreOnglets";
 
 // Détail d'un immeuble : nom, adresse, achat, logements (numéros, ajout, désactivation), vente.
-// Rien n'est supprimé : un logement se désactive, un immeuble vendu passe à actif = false
-// et reste visible dans l'historique (loyers, dépenses, baux).
+// Un logement se désactive, un immeuble vendu passe à actif = false et reste visible dans
+// l'historique (loyers, dépenses, baux).
+// « Supprimer cet immeuble de partout » (v0.9.0) : RPC supprimer_immeuble, suppression douce
+// de l'immeuble et de tout ce qui s'y rattache (les données restent en base).
 
 type Immeuble = {
   id: string;
@@ -29,6 +31,7 @@ type Message = { type: "succes" | "erreur" | "alerte"; texte: string } | null;
 
 export default function PageDetailImmeuble() {
   const { session, pret } = useSession();
+  const router = useRouter();
   const { id } = useParams<{ id: string }>();
 
   const [immeuble, setImmeuble] = useState<Immeuble | null>(null);
@@ -46,6 +49,10 @@ export default function PageDetailImmeuble() {
   const [vente, setVente] = useState(false);
   const [dateVente, setDateVente] = useState(aujourdhuiIso());
   const [prixVente, setPrixVente] = useState("");
+
+  const [suppression, setSuppression] = useState<{ logements: number; baux: number; depenses: number; trajets: number } | null>(null);
+  const [nomConfirme, setNomConfirme] = useState("");
+  const [envoi, setEnvoi] = useState(false);
 
   useEffect(() => {
     if (!session || !id) return;
@@ -184,6 +191,39 @@ export default function PageDetailImmeuble() {
     await charger();
   }
 
+  async function preparerSuppression() {
+    setMsg(null);
+    setNomConfirme("");
+    const { data: lg } = await supabase.from("logements").select("id").eq("immeuble_id", id).is("deleted_at", null);
+    const idsLogements = ((lg ?? []) as { id: string }[]).map((l) => l.id);
+    const [baux, depenses, trajets] = await Promise.all([
+      idsLogements.length
+        ? supabase.from("baux").select("id", { count: "exact", head: true }).in("logement_id", idsLogements).is("deleted_at", null)
+        : Promise.resolve({ count: 0 }),
+      supabase.from("v_depenses_detail").select("depense_id").eq("immeuble_id", id),
+      supabase.from("deplacements").select("id", { count: "exact", head: true }).eq("immeuble_id", id).is("deleted_at", null),
+    ]);
+    setSuppression({
+      logements: idsLogements.length,
+      baux: baux.count ?? 0,
+      depenses: new Set(((depenses.data ?? []) as { depense_id: string }[]).map((d) => d.depense_id)).size,
+      trajets: trajets.count ?? 0,
+    });
+  }
+
+  async function supprimerImmeuble() {
+    setEnvoi(true);
+    const { error } = await supabase.rpc("supprimer_immeuble", { p_id: id });
+    setEnvoi(false);
+    if (error) {
+      return setMsg({
+        type: "erreur",
+        texte: error.message.includes("supprimer_immeuble") ? "Exécuter supabase/014_vehicules_actifs.sql pour supprimer un immeuble." : error.message,
+      });
+    }
+    router.replace("/profil");
+  }
+
   if (!pret || !session) return null;
 
   const actifs = logements.filter((l) => l.actif);
@@ -295,6 +335,36 @@ export default function PageDetailImmeuble() {
                 <button className="bouton principal">Confirmer la vente</button>
               </div>
             </form>
+          )}
+        </div>
+      )}
+
+      {immeuble && (
+        <div style={{ marginTop: immeuble.actif && migration010 ? 0 : 24 }}>
+          {!suppression ? (
+            <button className="bouton plein lien-danger" onClick={preparerSuppression}>Supprimer cet immeuble de partout</button>
+          ) : (
+            <div className="carte bordure-danger">
+              <strong>Supprimer {immeuble.nom} de partout ?</strong>
+              <p className="aide">
+                Seront retirés de l&apos;app : {suppression.logements} logement(s), {suppression.baux} bail(s) avec leurs loyers et paiements,
+                {" "}{suppression.depenses} dépense(s), {suppression.trajets} trajet(s) de véhicule, ses trajets fréquents, ses frais fixes
+                (hypothèques, assurances, taxes) et ses notifications. Une dépense répartie avec un autre immeuble garde la part de l&apos;autre immeuble.
+              </p>
+              <p className="aide">
+                Si l&apos;immeuble a été vendu, utilise plutôt « Marquer comme vendu » : son historique reste pour l&apos;impôt.
+                Pour récupérer un immeuble supprimé par erreur, Loïc peut le remettre dans Supabase (rien n&apos;est effacé de la base).
+              </p>
+              <label htmlFor="nom-confirme">Pour confirmer, écris le nom de l&apos;immeuble : {immeuble.nom}</label>
+              <input id="nom-confirme" autoComplete="off" value={nomConfirme} onChange={(e) => setNomConfirme(e.target.value)} />
+              <div className="rangee" style={{ marginTop: 12 }}>
+                <button type="button" className="bouton" onClick={() => setSuppression(null)}>Annuler</button>
+                <button type="button" className="bouton principal danger" onClick={supprimerImmeuble}
+                        disabled={envoi || nomConfirme.trim().toLocaleLowerCase("fr-CA") !== immeuble.nom.trim().toLocaleLowerCase("fr-CA")}>
+                  {envoi ? "Suppression…" : "Oui, supprimer"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}

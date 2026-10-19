@@ -474,3 +474,15 @@ input.interrupteur:checked::after { transform: translateX(20px); }
 .ligne-test .infos { flex: 1; min-width: 0; }
 .ligne-test .titre { font-weight: 600; }
 .ligne-test .sous { font-size: 13px; color: var(--discret); }
+
+/* Véhicules (v0.9.0) : nom du véhicule entre les flèches, bouton « Composer un trajet » */
+.selecteur-vehicule .nom-vehicule { flex: 1; min-width: 0; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.selecteur-vehicule .nom-vehicule strong { overflow-wrap: anywhere; }
+.selecteur-vehicule .nom-vehicule .aide { margin: 2px 0 0; }
+.puce.actif .puce-retirer { color: var(--sur-accent); }
+.puce.composer { border-style: dashed; }
+.puce.composer button { color: var(--accent); font-weight: 600; }
+.sous-titre-actifs { font-size: 15px; color: var(--discret); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 6px; }
+/* Suppression d'un immeuble ou d'un véhicule (v0.9.0) */
+.bordure-danger { border: 2px solid var(--erreur); }
+.bouton.principal.danger { background: var(--erreur); border-color: var(--erreur); color: var(--sur-accent); }

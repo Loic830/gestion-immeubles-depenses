@@ -148,3 +148,25 @@ export function segmentsTrajet(etapes: string[], distances: Map<string, number>)
     : null;
   return { segments, total };
 }
+
+// ---------------------------------------------------------------------
+// Fiche du véhicule (v0.9.0) : marque, modèle, couleur, année
+// ---------------------------------------------------------------------
+
+export type FicheVehicule = {
+  id: string;
+  nom: string;
+  marque: string | null;
+  modele: string | null;
+  couleur: string | null;
+  annee: number | null;
+  actif: boolean;
+  date_vente: string | null;
+  prix_vente_cents: number | null;
+};
+
+/** Nom affiché entre les flèches : « Ford F-150 Noir » (marque + modèle + couleur). */
+export function nomVehicule(v: { marque?: string | null; modele?: string | null; couleur?: string | null; nom?: string | null }): string {
+  const nom = [v.marque, v.modele, v.couleur].map((x) => (x ?? "").trim()).filter(Boolean).join(" ");
+  return nom || (v.nom ?? "").trim() || "Véhicule";
+}

@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -31,6 +31,9 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
     `creer_bail_en_remplacement` (termine le bail en cours, puis crée le nouveau) ; `documents.deleted_at` (v0.8.7).
 13. `supabase/013_notifications.sql` — centre de notifications : tables `notifications`, `notifications_exclusions`
     (préférences), `abonnements_push` (téléphones) ; fonctions `alertes_du_jour()` et `generer_notifications()` (v0.8.9).
+14. `supabase/014_vehicules_actifs.sql` — véhicules : marque, modèle, couleur, année, vente ; RPC `supprimer_vehicule` et
+    `supprimer_immeuble` (suppression douce de tout ce qui s'y rattache) ; `v_depenses_detail` sans les immeubles supprimés ;
+    nom d'immeuble unique parmi les non supprimés (v0.9.0).
 
 ## 2. Lancer en local
 
@@ -75,7 +78,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 
 | Fichier | Rôle |
 | --- | --- |
-| `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Baux · Frais fixes · Dépenses · Véhicule |
+| `components/BarreOnglets.tsx` | Barre d'onglets du bas : Loyers · Baux · Frais fixes · Dépenses · Véhicules |
 | `components/EnTete.tsx` | En-tête fixe : « Immeubles So-Max », cloche (jaune-orangé s'il y a des non lues), avatar → Profil |
 | `components/TiroirNotifications.tsx` | Tiroir de la cloche : notifications du plus récent au plus ancien, lue / non lue, « Préférences des notifications » |
 | `components/PreferencesNotifications.tsx` | Préférences : chaque type du catalogue, oui / non, puis par immeuble ou par véhicule |
@@ -86,8 +89,12 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `app/api/notifications/envoyer/route.ts` | Serveur : GET (Vercel Cron) calcule et pousse à tous ; POST pousse les tests de la personne connectée |
 | `public/sw.js` | Service worker : affiche la notification poussée ; la toucher ouvre l'app à l'accueil (sans la marquer lue) |
 | `vercel.json` | Cron quotidien des notifications |
-| `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (immeubles, ajout, vendus) |
-| `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente |
+| `app/profil/page.tsx` | Profil : nom, cellulaire, courriel, mot de passe, déconnexion ; Actifs (Immeubles, Véhicules : ajout, vendus) ; Rapport d'impôts |
+| `app/profil/vehicules/[id]/page.tsx` | Détail d'un véhicule : marque, modèle, couleur, année ; vente ; suppression (v0.9.0) |
+| `components/FormulaireVehicule.tsx` | Ajouter / modifier un véhicule (onglet Véhicules et Profil) |
+| `components/RapportImpots.tsx` | Profil > Rapport d'impôts : année, dépenses + reçus (ZIP), CSV, dossier de chaque véhicule |
+| `lib/exportDepenses.ts` | Dépenses d'une année complète (par paquets de 1000) et export CSV |
+| `app/profil/immeubles/[id]/page.tsx` | Détail d'un immeuble : adresse, achat, logements (numéros, ajout, désactivation), vente, suppression de partout |
 | `app/frais-fixes/page.tsx` | Frais fixes : une carte par immeuble (Hypothèque, Assurances, Taxes), sélecteur d'année, totaux |
 | `components/FeuillePret.tsx` | Ajouter, modifier, renouveler (nouveau terme) ou retirer un prêt |
 | `components/FeuilleReleve.tsx` | Intérêts selon le relevé annuel du prêteur (a priorité sur le calcul) |
@@ -105,13 +112,13 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail |
 | `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble et par période : etat_des_loyers.xlsx (un bail par ligne, loyers dus et reçus de la période, onglet « Par année ») + dossier baux/ |
-| `app/vehicule/page.tsx` | Onglet Véhicule : trajets (favoris, motif), frais (reçu), compteur, résumé du prorata, export |
+| `app/vehicule/page.tsx` | Onglet Véhicules : flèches ‹ › entre les véhicules, trajets (fréquents, motif), frais (reçu), compteur, résumé du prorata |
 | `components/ConstructeurTrajet.tsx` | Composer un trajet par lieux ; distances retenues dans les deux sens |
 | `lib/vehicule.ts` | Calcul du prorata : km immeubles / km totaux, part déductible et répartition par immeuble |
 | `lib/exportVehicule.ts` | Dossier véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais avec liens) + recus/ |
 | `lib/dates.ts` | Dates AAAA-MM-JJ sans décalage de fuseau, fin de bail, tri naturel des numéros |
 | `app/login/page.tsx` | Connexion courriel + mot de passe (comptes créés dans Supabase) |
-| `app/page.tsx` | Récapitulatif, navigation Mois / Année (gardée dans l'URL), liste, exports, bouton « + » |
+| `app/page.tsx` | Récapitulatif, navigation Mois / Année (gardée dans l'URL), liste, bouton « + » (exports : Profil > Rapport d'impôts) |
 | `lib/periodes.ts` | Ancien calcul des périodes (plus utilisé depuis v0.8.8) |
 | `lib/exportDossier.ts` | Dossier comptable ZIP : depenses.xlsx (liens vers les reçus, onglet par catégorie) + dossier recus/ |
 | `lib/csv.ts` | Export CSV pour Excel en français (séparateur « ; », virgule décimale, UTF-8 avec BOM) |
@@ -238,6 +245,30 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 - Export par année : vehicule_AAAA.xlsx (Résumé, Journal de bord, Frais) + reçus. La DPA est laissée au comptable.
 - Dossier comptable (onglet Dépenses) en mode Année : une ligne « Frais de véhicule (part immeubles) » par immeuble (T776 ligne 9281) dans
   depenses.xlsx, comprise dans les totaux et « Par catégorie », + onglets « Véhicule - … » et dossier recus_vehicule/.
+
+## Véhicules, Actifs et Rapport d'impôts (v0.9.0)
+
+- **Onglet « Véhicules »** (renommé) : en haut, flèches ‹ › et le nom du véhicule au centre (marque + modèle + couleur, ex.
+  « Ford F-150 Noir », avec l'année et « 1 de 2 »). Les véhicules vendus suivent ceux en usage (pour revoir leurs années).
+  « + Ajouter un véhicule » : marque, modèle, couleur, année. Trajets, frais et compteur sont propres à chaque véhicule ;
+  les trajets fréquents et les lieux sont communs. Le nom (`vehicules.nom`) est rempli par l'app : exports et notifications le gardent.
+- **Années** : les flèches vont aussi dans le futur (comme Dépenses), avec « Revenir à l'année courante ».
+- **Trajets fréquents** : toucher un trajet le choisit (puce verte) et cache le choix d'immeuble (celui du trajet est rappelé en petit) ;
+  le toucher encore le retire. « Composer un trajet (Maison → Bloc → Rona…) » est la dernière puce de la liste ; il ouvre le
+  constructeur et cache les trajets fréquents. « Garder comme trajet fréquent » n'apparaît que si le trajet n'est pas déjà
+  dans la liste (même nom et mêmes km).
+- Retirés de l'onglet : l'export pour le comptable et « Ajouter un autre véhicule » (en bas). Retirés de Dépenses : les deux exports.
+- **Profil > Actifs** : deux sous-sections, Immeubles et Véhicules, chacune avec « + Ajouter » et « Afficher les … vendus ».
+  Détail d'un véhicule : modifier marque, modèle, couleur, année ; « Marquer comme vendu » (date, prix ; historique gardé) ;
+  « Supprimer ce véhicule » (RPC `supprimer_vehicule` : trajets, frais, relevés et notifications retirés par `deleted_at`).
+- **Supprimer cet immeuble de partout** (sous « Marquer comme vendu ») : la carte de confirmation compte ce qui sera retiré ;
+  il faut écrire le nom de l'immeuble. RPC `supprimer_immeuble` en une transaction : logements, baux (loyers et paiements suivent),
+  dépenses entièrement sur cet immeuble (une dépense répartie garde ses autres lignes ; `v_depenses_detail` cache la ligne),
+  trajets, trajets fréquents, lieu, hypothèques et relevés, assurances, taxes, notifications et préférences de tout le monde.
+  Suppression douce : rien n'est effacé de la base ; le nom redevient disponible.
+- **Profil > Rapport d'impôts** : flèches ‹ › pour l'année civile. « Exporter les dépenses AAAA + reçus (ZIP) » (même dossier
+  qu'avant en mode Année, frais de véhicule inclus), « Exporter en CSV seulement », puis « Dossier véhicule AAAA : nom » pour
+  chaque véhicule (ancien « Exporter AAAA pour le comptable »). Les dépenses sont lues par paquets de 1000 (pas de plafond).
 
 ## En-tête, navigation et Profil (v0.8.5)
 
