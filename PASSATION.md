@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **19 octobre 2026**, version **0.9.4**.
+> ou par une nouvelle conversation avec Claude. État au **20 octobre 2026**, version **0.9.5**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -26,7 +26,7 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicules.
 1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; encadré des dépôts faits du mois (toucher = par immeuble, v0.9.4) et boutons « Appeler » / « Texter » pour les retards (v0.9.2).
 2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8) ; choix d'un ou plusieurs immeubles (puces « Tous » + chaque immeuble, v0.9.1) ; anneau par catégorie et barres en mode Mois et Année (v0.9.2), cachés par défaut : toucher le montant du haut les affiche (v0.9.4). Les exports sont dans Profil > Rapport d'impôts (v0.9.0).
-3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2) ; filtres par logement (immeuble choisi) et par état des baux, « Renouveler le bail », « Modifier le prix du loyer » (v0.9.3) ; nouveau bail : question sur les mois passés, alerte sans photo du bail, photos de l'enquête de crédit et des règlements d'immeuble (aussi sur la fiche) (v0.9.4).
+3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2) ; filtres par logement (immeuble choisi) et par état des baux, « Renouveler le bail », « Modifier le prix du loyer » (v0.9.3) ; nouveau bail : question sur les mois passés, alerte sans photo du bail, photos de l'enquête de crédit et des règlements d'immeuble (aussi sur la fiche) (v0.9.4) ; **cession de bail** sur la fiche, type de bail (nouveau, renouvellement, cession) et dossier prêteur qui joint toute la chaîne des copies : bail d'origine, renouvellements, cession (v0.9.5).
 4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
 6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs séparés en **Immeubles** (ajout, logements, vente, « Supprimer cet immeuble de partout ») et **Véhicules** (ajout, modification, vente, suppression) ; **Rapport d'impôts** (v0.9.0) : année + dépenses et reçus (ZIP), CSV, dossier de chaque véhicule ; en bas, « Tester les notifications possibles » (v0.8.9).
@@ -91,8 +91,9 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 015 | `015_mois_payes.sql` | RPC `marquer_mois_payes(bail, mois jsonb)` (paiement « reçu » = solde du mois, mode du bail, daté de l'échéance ; seulement les mois échus) ; `creer_bail` redéfinie (copie de 004 + `mois_payes`) (v0.9.1) | **à exécuter** |
 | 016 | `016_renouveler_bail.sql` | RPC `renouveler_bail(bail, début, fin, loyer)` (via `creer_bail`, `bail_precedent_id`, réponse = acceptée) ; `alertes_du_jour` redéfinie (copie de 013 + pas d'avis TAL si un bail suit avec `bail_precedent_id`) (v0.9.3) | **à exécuter** |
 | 017 | `017_documents_bail.sql` | types de documents `enquete_credit` et `reglements` (v0.9.4) | **à exécuter** |
+| 018 | `018_cession_bail.sql` | `baux.origine` (nouveau / renouvellement / cession ; anciens renouvellements reconnus par leur note) ; `v_baux` redéfinie (colonnes explicites + `origine` à la fin) ; `renouveler_bail` redéfinie (copie de 016 + origine) ; RPC `ceder_bail(bail, date, locataires)` (terminer_bail la veille + creer_bail, mêmes loyer/fin/extras, hausses prévues reportées) (v0.9.5) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `018_…`.
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `019_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
@@ -123,8 +124,8 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `app/loyers/page.tsx` | onglet **Loyers** | `PageLoyers` |
 | `app/baux/page.tsx` | onglet **Baux** (liste) | `PageBaux` |
 | `app/baux/nouveau/page.tsx` | nouveau bail | `PageNouveauBail` |
-| `app/baux/[id]/page.tsx` | fiche du bail | `DetailBail` |
-| `app/baux/[id]/modifier/page.tsx` | modifier le bail (v0.8.7) | `ModifierBail` |
+| `app/baux/[id]/page.tsx` | fiche du bail ; « Cession de bail », type et lien vers le bail précédent (v0.9.5) | `DetailBail` |
+| `app/baux/[id]/modifier/page.tsx` | modifier le bail (v0.8.7) ; type de bail si le bail suit un autre bail (v0.9.5) | `ModifierBail` |
 | `app/baux/logement/[id]/page.tsx` | historique des baux d'un logement (v0.8.7) | `HistoriqueLogement` |
 | `app/vehicule/page.tsx` | onglet **Véhicules** | `PageVehicule` |
 | `app/login/page.tsx` | connexion | `PageConnexion` |
@@ -151,7 +152,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `components/FormulaireBail.tsx` | formulaire partagé Nouveau bail / Modifier le bail (validation, paramètre `p` des RPC) ; questions avant d'enregistrer (mois passés, bail sans photo) (v0.9.4) |
 | `components/DocumentsBail.tsx` | fiche du bail : une section de documents (bail signé, enquête de crédit, règlements) (v0.9.4) |
 | `lib/documents.ts` | `DOCUMENTS_BAIL` (types, titres, textes) et `televerserDocument` (bucket + table documents) (v0.9.4) |
-| `lib/baux.ts` | période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; `etatsBail`, `ETATS`, `lireEtats` (filtre d'état, v0.9.3) |
+| `lib/baux.ts` | période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; `etatsBail`, `ETATS`, `lireEtats` (filtre d'état, v0.9.3) ; `LIBELLE_ORIGINE`, `TITRE_COPIE`, `chaineDe` (chaîne bail d'origine → renouvellements → cession, v0.9.5) |
 | `components/FormulaireDepense.tsx` | formulaire partagé saisie/modification ; ordre : montant, fournisseur, catégorie, date, immeuble ou répartition |
 | `components/ChoixFournisseur.tsx` | champ fournisseur avec menu (recherche sans accents, plus utilisés en premier) |
 | `components/ConstructeurTrajet.tsx` | composer un trajet par lieux, distances retenues dans les deux sens |
@@ -164,7 +165,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `lib/repartition.ts` | répartition au cent près (méthode du plus fort reste) |
 | `lib/csv.ts` | CSV pour Excel français (`;`, virgule décimale, BOM UTF-8) |
 | `lib/exportDossier.ts` | dossier comptable : `depenses.xlsx` + `recus/` (+ véhicule sur une année complète) |
-| `lib/exportBaux.ts` | dossier prêteur par période : `etat_des_loyers.xlsx` (un bail par ligne, onglet « Par année ») + `baux/` |
+| `lib/exportBaux.ts` | dossier prêteur par période : `etat_des_loyers.xlsx` (un bail par ligne avec son type, onglets « Par année » et « Copies des baux ») + `baux/` avec la chaîne complète de chaque bail (`Gauthier_6_1-bail-2023_…`, `2-renouvellement-…`, `3-cession-…`) (v0.9.5) |
 | `lib/vehicule.ts` | calcul du prorata (km immeubles / km totaux), segments de trajets |
 | `lib/exportVehicule.ts` | onglets et reçus du véhicule (seul ou dans le dossier comptable) |
 | `app/globals.css` | thème vert, clair et sombre (contrastes ≥ 7:1) |
@@ -253,6 +254,18 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.5)**
+- Exécuter `018_cession_bail.sql`. Sans elle, l'historique d'un logement, « Modifier le bail », la cession et le dossier prêteur affichent une erreur (colonne `origine` ou fonction `ceder_bail` introuvable).
+
+**Choix faits en 0.9.5** (demande de Maxime du 20 oct. : les banques veulent les baux en cours avec le bail d'origine,
+la cession et les renouvellements). Chaîne = on remonte `bail_precedent_id` tant que le bail est un renouvellement ou une cession ;
+un « nouveau » bail (même créé par remplacement, qui pose aussi `bail_precedent_id`) commence une nouvelle chaîne. Le dossier joint
+la chaîne de chaque bail de la période, même si les baux précédents sont avant la période ; chaque copie n'est jointe qu'une fois.
+Cession : prend effet le 1er d'un mois (les loyers sont mensuels) ; l'ancien bail se termine la veille (`terminer_bail`, mois et
+paiements gardés à son nom), le nouveau reprend loyer du mois de la cession, fin, extras, mode, jour, inclusions et hausses déjà prévues.
+Le type se corrige dans « Modifier le bail » (seulement si le bail suit un autre bail), par exemple pour une cession entrée avant 0.9.5
+comme nouveau bail. Les photos « bail » d'un renouvellement s'appellent « Renouvellement signé », celles d'une cession « Entente de cession ».
 
 **À faire par Loïc (v0.9.4)**
 - Exécuter `017_documents_bail.sql`. Sans elle, les photos d'enquête de crédit et de règlements ne s'enregistrent pas

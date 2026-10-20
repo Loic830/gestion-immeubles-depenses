@@ -46,6 +46,12 @@ export function lendemain(iso: string): string {
   return versIso(new Date(a, m - 1, j + 1));
 }
 
+/** Veille : « 2027-01-01 » → « 2026-12-31 » */
+export function veille(iso: string): string {
+  const [a, m, j] = iso.split("-").map(Number);
+  return versIso(new Date(a, m - 1, j - 1));
+}
+
 /** Dernier jour du mois : « 2026-10-16 » → « 2026-10-31 » */
 export function finDuMois(iso: string): string {
   const [a, m] = iso.split("-").map(Number);

@@ -10,8 +10,12 @@ import { DOCUMENTS_BAIL, televerserDocument, type TypeDocumentBail } from "@/lib
 
 type Document = { id: string; storage_key: string; mime_type: string; url: string | null };
 
-export default function DocumentsBail({ bailId, type, setErreur }: { bailId: string; type: TypeDocumentBail; setErreur: (m: string | null) => void }) {
-  const def = DOCUMENTS_BAIL.find((d) => d.type === type)!;
+export default function DocumentsBail({ bailId, type, setErreur, titre, aide }: {
+  bailId: string; type: TypeDocumentBail; setErreur: (m: string | null) => void;
+  titre?: string; aide?: string;  // v0.9.5 : « Renouvellement signé », « Entente de cession »
+}) {
+  const base = DOCUMENTS_BAIL.find((d) => d.type === type)!;
+  const def = { ...base, titre: titre ?? base.titre, aideFiche: aide ?? base.aideFiche, bouton: titre ? "Ajouter une photo" : base.bouton };
   const [documents, setDocuments] = useState<Document[]>([]);
   const [televersement, setTeleversement] = useState<string | null>(null);
   const champPhoto = useRef<HTMLInputElement>(null);

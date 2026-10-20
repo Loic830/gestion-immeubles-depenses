@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { dateLisible } from "@/lib/dates";
+import { LIBELLE_ORIGINE, type OrigineBail } from "@/lib/baux";
 
 // Historique de tous les baux d'un logement, du plus récent au plus ancien.
 
@@ -20,6 +21,7 @@ type Bail = {
   loyer_cents: number;
   extras_cents: number;
   locataires: string | null;
+  origine: OrigineBail;
 };
 type Mois = { bail_id: string; montant_du_cents: number; recu_cents: number };
 
@@ -41,7 +43,7 @@ export default function HistoriqueLogement() {
       const [lo, ba] = await Promise.all([
         supabase.from("logements").select("id, numero, immeuble:immeubles(nom)").eq("id", id).single(),
         supabase.from("v_baux")
-          .select("id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, locataires")
+          .select("id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, locataires, origine")
           .eq("logement_id", id).order("date_debut", { ascending: false }),
       ]);
       if (lo.error || !lo.data) { setErreur("Logement introuvable."); setChargement(false); return; }
@@ -89,7 +91,7 @@ export default function HistoriqueLogement() {
               <Link key={b.id} href={`/baux/${b.id}`} className="liste-depense">
                 <div className="infos">
                   <div className="titre">{b.locataires ?? "Locataire à préciser"}</div>
-                  <div className="sous">{dateLisible(b.date_debut)} → {fin}</div>
+                  <div className="sous">{dateLisible(b.date_debut)} → {fin}{b.origine !== "nouveau" ? ` · ${LIBELLE_ORIGINE[b.origine]}` : ""}</div>
                   <div className="sous">
                     {formatCents(b.loyer_cents + b.extras_cents)} / mois · reçu {formatCents(recu)} sur {formatCents(du)}
                   </div>

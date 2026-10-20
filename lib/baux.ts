@@ -83,3 +83,43 @@ export function lireEtats(texte: string | null): EtatBail[] {
   const codes = ETATS.map((e) => e.code);
   return (texte ?? "").split(",").filter((x): x is EtatBail => (codes as string[]).includes(x));
 }
+
+// Type de bail (v0.9.5) : un renouvellement ou une cession suit le bail précédent (bail_precedent_id).
+// Le dossier prêteur remonte cette chaîne pour joindre le bail d'origine signé et chaque suite.
+export type OrigineBail = "nouveau" | "renouvellement" | "cession";
+
+export const LIBELLE_ORIGINE: Record<OrigineBail, string> = {
+  nouveau: "Nouveau bail",
+  renouvellement: "Renouvellement",
+  cession: "Cession",
+};
+
+/** Titre des photos « bail » sur la fiche, selon le type */
+export const TITRE_COPIE: Record<OrigineBail, { titre: string; aide: string }> = {
+  nouveau: { titre: "Bail signé", aide: "Photo ou PDF du bail, pour le dossier du prêteur et les renouvellements." },
+  renouvellement: {
+    titre: "Renouvellement signé",
+    aide: "Photo de l'avis de renouvellement (ou du nouveau bail) signé. Le dossier du prêteur joint aussi le bail d'origine.",
+  },
+  cession: {
+    titre: "Entente de cession",
+    aide: "Photo de l'entente de cession signée. Le dossier du prêteur joint aussi le bail d'origine et ses renouvellements.",
+  },
+};
+
+export type MaillonBail = { id: string; bail_precedent_id: string | null; origine: OrigineBail };
+
+/** Chaîne d'un bail, du bail d'origine jusqu'à lui : on remonte tant que le bail est un renouvellement ou une cession. */
+export function chaineDe<T extends MaillonBail>(bail: T, tous: T[]): T[] {
+  const chaine = [bail];
+  const vus = new Set([bail.id]);
+  let courant = bail;
+  while ((courant.origine ?? "nouveau") !== "nouveau" && courant.bail_precedent_id && !vus.has(courant.bail_precedent_id)) {
+    const precedent = tous.find((b) => b.id === courant.bail_precedent_id);
+    if (!precedent) break;
+    chaine.unshift(precedent);
+    vus.add(precedent.id);
+    courant = precedent;
+  }
+  return chaine;
+}

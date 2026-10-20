@@ -7,11 +7,13 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { centsVersSaisie } from "@/lib/argent";
 import { dateLisible, moisLisible } from "@/lib/dates";
+import { LIBELLE_ORIGINE, type OrigineBail } from "@/lib/baux";
 import FormulaireBail, { dureeDe, extrasVersForm, type BailSaisi, type Mode, type ValeursBail } from "@/components/FormulaireBail";
 
 type BailBase = {
   id: string; logement_id: string; date_debut: string; date_fin: string | null; date_depart: string | null;
   loyer_cents: number; jour_echeance: number; mode_paiement: string; inclusions: string | null; notes: string | null;
+  bail_precedent_id: string | null; origine: OrigineBail;
 };
 type LienLocataire = { principal: boolean; locataire: { id: string; prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 
@@ -26,12 +28,14 @@ export default function ModifierBail() {
   const [avecPaiements, setAvecPaiements] = useState(false);
   const [envoi, setEnvoi] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
+  // Type du bail (v0.9.5), modifiable seulement s'il suit un autre bail
+  const [origine, setOrigine] = useState<OrigineBail>("nouveau");
 
   useEffect(() => {
     if (!session || !id) return;
     (async () => {
       const [b, lo, ex, ch, so] = await Promise.all([
-        supabase.from("baux").select("id, logement_id, date_debut, date_fin, date_depart, loyer_cents, jour_echeance, mode_paiement, inclusions, notes")
+        supabase.from("baux").select("id, logement_id, date_debut, date_fin, date_depart, loyer_cents, jour_echeance, mode_paiement, inclusions, notes, bail_precedent_id, origine")
           .eq("id", id).is("deleted_at", null).single(),
         supabase.from("bail_locataires").select("principal, locataire:locataires(id, prenom, nom, telephone, courriel)").eq("bail_id", id),
         supabase.from("bail_extras").select("libelle, montant_cents").eq("bail_id", id).order("created_at"),
@@ -43,6 +47,7 @@ export default function ModifierBail() {
       const premier = ((ch.data ?? []) as { date_effet: string; ancien_loyer_cents: number }[])[0];
       const liens = ((lo.data ?? []) as unknown as LienLocataire[]).sort((x, y) => Number(y.principal) - Number(x.principal));
       setBail(leBail);
+      setOrigine(leBail.origine ?? "nouveau");
       setPremierChangement(premier?.date_effet ?? null);
       setAvecPaiements(((so.data ?? []) as { recu_cents: number; en_main_cents: number }[]).some((s) => s.recu_cents > 0 || s.en_main_cents > 0));
       const duree = dureeDe(leBail.date_debut, leBail.date_fin);
@@ -81,6 +86,10 @@ export default function ModifierBail() {
         ? "Ces dates chevauchent un autre bail de ce logement. Vérifie les dates (voir l'historique du logement)."
         : error.message);
     }
+    if (bail && origine !== bail.origine) {
+      const { error: e2 } = await supabase.from("baux").update({ origine }).eq("id", id);
+      if (e2) { setEnvoi(null); return setErreur(e2.message); }
+    }
     router.replace(`/baux/${id}`);
   }
 
@@ -103,6 +112,18 @@ export default function ModifierBail() {
             « Modifier le prix du loyer » sur la fiche.
             {bail.date_depart && ` Le départ du locataire (${dateLisible(bail.date_depart)}) reste inscrit.`}
           </p>
+          {bail.bail_precedent_id && (
+            <section className="carte">
+              <label htmlFor="origine" style={{ marginTop: 0 }}>Type de bail (dossier du prêteur)</label>
+              <select id="origine" value={origine} onChange={(e) => setOrigine(e.target.value as OrigineBail)}>
+                {(Object.keys(LIBELLE_ORIGINE) as OrigineBail[]).map((o) => <option key={o} value={o}>{LIBELLE_ORIGINE[o]}</option>)}
+              </select>
+              <p className="aide">
+                Renouvellement ou cession : le dossier du prêteur joint aussi les photos du bail précédent (bail d&apos;origine).
+                Nouveau bail : un autre locataire, sans lien avec le bail précédent.
+              </p>
+            </section>
+          )}
           <FormulaireBail
             initial={initial}
             titreLoyer={premierChangement ? "Loyer au début du bail" : "Loyer mensuel"}

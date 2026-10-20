@@ -7,8 +7,10 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { DOCUMENTS_BAIL } from "@/lib/documents";
 import DocumentsBail from "@/components/DocumentsBail";
+import { nouveauLocataire, type LocataireForm } from "@/components/FormulaireBail";
+import { LIBELLE_ORIGINE, TITRE_COPIE, type OrigineBail } from "@/lib/baux";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible, lendemain, finDuMois, finApresMois } from "@/lib/dates";
+import { aujourdhuiIso, dateLisible, moisLisible, lendemain, veille, finDuMois, finApresMois } from "@/lib/dates";
 
 type Bail = {
   id: string;
@@ -29,13 +31,15 @@ type Bail = {
   avis_au: string | null;
   date_avis_envoye: string | null;
   reponse: string | null;
+  origine: OrigineBail;
+  bail_precedent_id: string | null;
 };
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
 type Solde = { echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
 type Changement = { id: string; date_effet: string; ancien_loyer_cents: number; nouveau_loyer_cents: number; raison: string | null; created_at: string };
 type FinBail = { date_depart: string; forfait_cents: number; raison: string | null };
-type AutreBail = { id: string; statut: "a_venir" | "actif" | "termine"; date_debut: string; date_fin: string | null; date_depart: string | null; locataires: string | null };
+type AutreBail = { id: string; statut: "a_venir" | "actif" | "termine"; date_debut: string; date_fin: string | null; date_depart: string | null; locataires: string | null; origine: OrigineBail; bail_precedent_id: string | null };
 type Credit = { id: string; echeance_id: string; montant_cents: number; notes: string | null };
 
 const LIBELLE_MODE = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement automatique", comptant: "Comptant" };
@@ -74,6 +78,11 @@ export default function DetailBail() {
   const [renouvDebut, setRenouvDebut] = useState("");
   const [renouvMois, setRenouvMois] = useState("12");
   const [envoiRenouv, setEnvoiRenouv] = useState(false);
+  // Céder le bail (v0.9.5) : le bail continue au nom d'un nouveau locataire
+  const [cessionOuverte, setCessionOuverte] = useState(false);
+  const [cessionMois, setCessionMois] = useState("");
+  const [cessionnaires, setCessionnaires] = useState<LocataireForm[]>([]);
+  const [envoiCession, setEnvoiCession] = useState(false);
 
   const charger = useCallback(async () => {
     if (!id) return;
@@ -92,7 +101,7 @@ export default function DetailBail() {
       setFin((fi.data ?? null) as FinBail | null);
       // Historique du logement : les autres baux (anciens et à venir)
       const { data: au } = await supabase.from("v_baux")
-        .select("id, statut, date_debut, date_fin, date_depart, locataires")
+        .select("id, statut, date_debut, date_fin, date_depart, locataires, origine, bail_precedent_id")
         .eq("logement_id", leBail.logement_id).neq("id", leBail.id).order("date_debut", { ascending: false });
       setAutresBaux((au ?? []) as AutreBail[]);
       setLocataires(((lo.data ?? []) as unknown as Locataire[]).sort((x, y) => Number(y.principal) - Number(x.principal)));
@@ -154,6 +163,44 @@ export default function DetailBail() {
     setEnvoiRenouv(false);
     if (error) return setErreur(error.message);
     setRenouvOuvert(false);
+    router.push(`/baux/${nouveauId}`);
+  }
+
+  function ouvrirCession() {
+    const debutMois = aujourdhuiIso().slice(0, 7) + "-01";
+    const possibles = soldes.filter((s) => s.mois > (bail?.date_debut ?? ""));
+    // Par défaut : le mois prochain
+    setCessionMois(possibles.find((s) => s.mois > debutMois)?.mois ?? possibles[possibles.length - 1]?.mois ?? "");
+    setCessionnaires([nouveauLocataire()]);
+    setCessionOuverte(true);
+  }
+
+  async function enregistrerCession() {
+    if (!bail) return;
+    if (!cessionMois) return setErreur("Choisis le mois où le nouveau locataire prend le bail.");
+    const remplis = cessionnaires.filter((l) => l.prenom.trim() || l.nom.trim());
+    if (remplis.length === 0 || remplis.some((l) => !l.prenom.trim() || !l.nom.trim())) {
+      return setErreur("Entre le prénom et le nom du nouveau locataire.");
+    }
+    const noms = remplis.map((l) => `${l.prenom.trim()} ${l.nom.trim()}`).join(", ");
+    const loyer = soldes.find((s) => s.mois === cessionMois);
+    if (!window.confirm(
+      `Le bail de ${bail.date_fin ? `jusqu'au ${dateLisible(bail.date_fin)}` : "durée indéterminée"} passe à ${noms} le ${dateLisible(cessionMois)}` +
+      (loyer ? `, au même loyer (${formatCents(loyer.montant_du_cents)} par mois)` : "") +
+      `. Le bail actuel se termine le ${dateLisible(veille(cessionMois))} ; ` +
+      "les mois passés et les paiements restent à son nom."
+    )) return;
+    setErreur(null);
+    setEnvoiCession(true);
+    const { data: nouveauId, error } = await supabase.rpc("ceder_bail", {
+      p_bail: bail.id, p_date: cessionMois,
+      p_locataires: remplis.map((l) => ({
+        prenom: l.prenom.trim(), nom: l.nom.trim(), telephone: l.telephone.trim() || null, courriel: l.courriel.trim() || null,
+      })),
+    });
+    setEnvoiCession(false);
+    if (error) return setErreur(error.message);
+    setCessionOuverte(false);
     router.push(`/baux/${nouveauId}`);
   }
 
@@ -268,6 +315,17 @@ export default function DetailBail() {
               </div>
             )}
             <span className={`pastille ${bail.statut === "actif" ? "ok" : bail.statut === "termine" ? "gris" : ""}`}>{LIBELLE_STATUT[bail.statut]}</span>
+            {bail.origine !== "nouveau" && <span className="pastille" style={{ marginLeft: 6 }}>{LIBELLE_ORIGINE[bail.origine]}</span>}
+            {(() => {
+              const precedent = autresBaux.find((a) => a.id === bail.bail_precedent_id);
+              if (bail.origine === "nouveau" || !precedent) return null;
+              return (
+                <p className="aide" style={{ marginBottom: 0 }}>
+                  {bail.origine === "cession" ? "Cession du bail de " : "Suite du bail de "}
+                  <Link href={`/baux/${precedent.id}`}>{precedent.locataires ?? "l'ancien locataire"} ({dateLisible(precedent.date_debut)})</Link>
+                </p>
+              );
+            })()}
             <div className="rangee" style={{ marginTop: 12 }}>
               <Link className="bouton" style={{ textAlign: "center" }} href={`/baux/${bail.id}/modifier`}>Modifier le bail</Link>
               <Link className="bouton" style={{ textAlign: "center" }} href={`/baux/logement/${bail.logement_id}`}>
@@ -419,7 +477,19 @@ export default function DetailBail() {
           })()}
 
           {/* Départ du locataire */}
-          {bail.date_depart ? (
+          {bail.date_depart && autresBaux.some((a) => a.bail_precedent_id === bail.id && a.origine === "cession") ? (() => {
+            const cessionnaire = autresBaux.find((a) => a.bail_precedent_id === bail.id && a.origine === "cession")!;
+            return (
+              <section className="carte">
+                <strong>Bail cédé</strong>
+                <p className="aide">
+                  Le bail est passé à {cessionnaire.locataires ?? "un nouveau locataire"} le {dateLisible(cessionnaire.date_debut)}.
+                  Les mois jusqu&apos;au {dateLisible(bail.date_depart)} et leurs paiements restent ici.
+                </p>
+                <Link className="bouton plein" style={{ textAlign: "center" }} href={`/baux/${cessionnaire.id}`}>Voir le bail du nouveau locataire</Link>
+              </section>
+            );
+          })() : bail.date_depart ? (
             <section className="carte">
               <strong>Fin du bail</strong>
               <p className="aide">
@@ -469,8 +539,66 @@ export default function DetailBail() {
             </section>
           )}
 
-          {/* Bail signé, enquête de crédit, règlements d'immeuble (v0.9.4) */}
-          {DOCUMENTS_BAIL.map((d) => <DocumentsBail key={d.type} bailId={id} type={d.type} setErreur={setErreur} />)}
+          {/* Cession de bail (v0.9.5) */}
+          {bail.statut !== "termine" && !bail.date_depart && soldes.some((s) => s.mois > bail.date_debut) && (
+            <section className="carte">
+              {!cessionOuverte ? (
+                <button className="bouton plein" onClick={ouvrirCession}>Cession de bail (nouveau locataire)</button>
+              ) : (
+                <>
+                  <strong>Cession de bail</strong>
+                  <label htmlFor="cession-mois">Le nouveau locataire prend le bail le</label>
+                  <select id="cession-mois" value={cessionMois} onChange={(e) => setCessionMois(e.target.value)}>
+                    {soldes.filter((s) => s.mois > bail.date_debut).map((s) => (
+                      <option key={s.mois} value={s.mois}>
+                        1er {moisLisible(s.mois)}{s.recu_cents > 0 || s.en_main_cents > 0 ? " (déjà payé en partie ou au complet)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {cessionnaires.map((l, i) => (
+                    <div key={l.cle} className="bloc-locataire">
+                      <div className="entete" style={{ margin: "0 0 6px" }}>
+                        <span className="aide" style={{ margin: 0 }}>{i === 0 ? "Nouveau locataire" : `Colocataire ${i}`}</span>
+                        {cessionnaires.length > 1 && (
+                          <button type="button" className="lien-retirer" onClick={() => setCessionnaires((a) => a.filter((x) => x.cle !== l.cle))}>Retirer</button>
+                        )}
+                      </div>
+                      <div className="rangee">
+                        <input placeholder="Prénom" autoComplete="off" value={l.prenom} aria-label="Prénom"
+                               onChange={(e) => setCessionnaires((a) => a.map((x) => x.cle === l.cle ? { ...x, prenom: e.target.value } : x))} />
+                        <input placeholder="Nom" autoComplete="off" value={l.nom} aria-label="Nom"
+                               onChange={(e) => setCessionnaires((a) => a.map((x) => x.cle === l.cle ? { ...x, nom: e.target.value } : x))} />
+                      </div>
+                      <div className="rangee" style={{ marginTop: 8 }}>
+                        <input placeholder="Téléphone" type="tel" inputMode="tel" autoComplete="off" value={l.telephone} aria-label="Téléphone"
+                               onChange={(e) => setCessionnaires((a) => a.map((x) => x.cle === l.cle ? { ...x, telephone: e.target.value } : x))} />
+                        <input placeholder="Courriel" type="email" autoComplete="off" value={l.courriel} aria-label="Courriel"
+                               onChange={(e) => setCessionnaires((a) => a.map((x) => x.cle === l.cle ? { ...x, courriel: e.target.value } : x))} />
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" className="lien-filtres" onClick={() => setCessionnaires((a) => [...a, nouveauLocataire()])}>+ Ajouter un colocataire</button>
+                  <p className="aide">
+                    Le bail continue au nom du nouveau locataire : même loyer, même fin, mêmes extras, même mode de paiement.
+                    Le bail actuel se termine la veille ; ses mois et paiements restent à son nom.
+                    Ajoute ensuite la photo de l&apos;entente de cession sur le nouveau bail.
+                  </p>
+                  <div className="rangee">
+                    <button className="bouton" onClick={() => setCessionOuverte(false)} disabled={envoiCession}>Annuler</button>
+                    <button className="bouton principal" onClick={enregistrerCession} disabled={envoiCession}>
+                      {envoiCession ? "Enregistrement…" : "Céder le bail"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* Bail signé, enquête de crédit, règlements d'immeuble (v0.9.4) ; titre selon le type (v0.9.5) */}
+          {DOCUMENTS_BAIL.map((d) => (
+            <DocumentsBail key={d.type} bailId={id} type={d.type} setErreur={setErreur}
+                           {...(d.type === "bail" && bail.origine !== "nouveau" ? TITRE_COPIE[bail.origine] : {})} />
+          ))}
 
           {bail.avis_du && !bail.date_depart && (
             <section className="carte">
