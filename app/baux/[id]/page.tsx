@@ -11,7 +11,7 @@ import FeuilleLoyer from "@/components/FeuilleLoyer";
 import { nouveauLocataire, type LocataireForm } from "@/components/FormulaireBail";
 import { LIBELLE_ORIGINE, TITRE_COPIE, type OrigineBail } from "@/lib/baux";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible, lendemain, veille, finDuMois, finApresMois, moisEchus } from "@/lib/dates";
+import { aujourdhuiIso, dateLisible, moisLisible, lendemain, veille, finDuMois, finBail, moisEchus } from "@/lib/dates";
 
 type Bail = {
   id: string;
@@ -160,7 +160,7 @@ export default function DetailBail() {
   // Fin du nouveau bail : la durée choisie, sans dépasser la veille du bail suivant
   const finRenouvellement = (() => {
     if (!renouvDebut || !(Number(renouvMois) >= 1)) return null;
-    const fin = finApresMois(renouvDebut, Number(renouvMois));
+    const fin = finBail(renouvDebut, Number(renouvMois));
     return prochainBail && fin >= prochainBail.date_debut ? veille(prochainBail.date_debut) : fin;
   })();
   const renouvPasses = renouvOuvert && bail ? moisEchus(renouvDebut, finRenouvellement, bail.jour_echeance) : [];
@@ -187,7 +187,7 @@ export default function DetailBail() {
     if (!renouvDebut) return setErreur("Entre la date de début du nouveau bail.");
     const mois = Number(renouvMois);
     if (!Number.isInteger(mois) || mois < 1 || mois > 120) return setErreur("Entre une durée en mois (ex. 12).");
-    const finNouveau = finRenouvellement ?? finApresMois(renouvDebut, mois);
+    const finNouveau = finRenouvellement ?? finBail(renouvDebut, mois);
     if (prochainBail && renouvDebut >= prochainBail.date_debut) {
       return setErreur(`Le bail suivant commence le ${dateLisible(prochainBail.date_debut)} : le renouvellement doit commencer avant.`);
     }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { preparerFichier, type FichierPrepare } from "@/lib/image";
 import { versCents, formatCents, centsVersSaisie } from "@/lib/argent";
-import { finApresMois, triNumero, dateLisible, moisEchus, moisLisible } from "@/lib/dates";
+import { finBail, finDuMois, triNumero, dateLisible, moisEchus, moisLisible } from "@/lib/dates";
 import { DOCUMENTS_BAIL, aucunePage, type PagesParType, type TypeDocumentBail } from "@/lib/documents";
 
 // Formulaire partagé : Nouveau bail et Modifier le bail.
@@ -73,8 +73,10 @@ export function extrasVersForm(liste: { libelle: string; montant_cents: number }
 /** Durée d'un bail existant : 12 mois si la fin tombe à 12 mois moins un jour */
 export function dureeDe(debut: string, fin: string | null): Duree {
   if (!fin) return "indeterminee";
-  return finApresMois(debut, 12) === fin ? "12" : "autre";
+  return finBail(debut, 12) === fin ? "12" : "autre";
 }
+
+const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
 type Props = {
   initial: ValeursBail;
@@ -140,7 +142,20 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
     return () => { annule = true; };
   }, [nouveau, logementId]);
 
-  const dateFin = duree === "12" ? (dateDebut ? finApresMois(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
+  const dateFin = duree === "12" ? (dateDebut ? finBail(dateDebut, 12) : "") : duree === "autre" ? dateFinAutre : "";
+  // « Autre » (v0.9.8) : on choisit le mois et l'année, la fin tombe le dernier jour du mois
+  const anneeDebut = Number(dateDebut.slice(0, 4)) || new Date().getFullYear();
+  const anneeFin = Number(dateFinAutre.slice(0, 4)) || anneeDebut;
+  const anneesFin = Array.from({ length: 11 }, (_, i) => Math.min(anneeDebut, anneeFin) + i);
+  if (!anneesFin.includes(anneeFin)) anneesFin.push(anneeFin);
+  function choisirFin(annee: number, mois: number) {
+    setDateFinAutre(finDuMois(`${annee}-${String(mois).padStart(2, "0")}-01`));
+  }
+  function choisirDuree(d: Duree) {
+    // Autre : propose la fin d'un bail de 12 mois, à ajuster
+    if (d === "autre" && !dateFinAutre && dateDebut) setDateFinAutre(finBail(dateDebut, 12));
+    setDuree(d);
+  }
   const loyerCents = versCents(loyerSaisi);
   const signe = (e: ExtraForm) => (e.credit ? -1 : 1);
   const extrasCents = extras.reduce((s, e) => s + signe(e) * (versCents(e.montantSaisi) ?? 0), 0);
@@ -298,14 +313,30 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
 
         <label>Durée</label>
         <div className="choix">
-          <button type="button" className={duree === "12" ? "actif" : ""} onClick={() => setDuree("12")}>12 mois</button>
-          <button type="button" className={duree === "autre" ? "actif" : ""} onClick={() => setDuree("autre")}>Autre</button>
-          <button type="button" className={duree === "indeterminee" ? "actif" : ""} onClick={() => setDuree("indeterminee")}>Indéterminée</button>
+          <button type="button" className={duree === "12" ? "actif" : ""} onClick={() => choisirDuree("12")}>12 mois</button>
+          <button type="button" className={duree === "autre" ? "actif" : ""} onClick={() => choisirDuree("autre")}>Autre</button>
+          <button type="button" className={duree === "indeterminee" ? "actif" : ""} onClick={() => choisirDuree("indeterminee")}>Indéterminée</button>
         </div>
         {duree === "autre" && (
           <>
-            <label htmlFor="fin">Fin du bail</label>
-            <input id="fin" type="date" value={dateFinAutre} onChange={(e) => setDateFinAutre(e.target.value)} />
+            <label htmlFor="fin-mois">Fin du bail</label>
+            <div className="rangee">
+              <select id="fin-mois" aria-label="Mois de fin" value={dateFinAutre ? Number(dateFinAutre.slice(5, 7)) : ""}
+                      onChange={(e) => choisirFin(anneeFin, Number(e.target.value))}>
+                {!dateFinAutre && <option value="">Mois</option>}
+                {NOMS_MOIS.map((nom, i) => <option key={nom} value={i + 1}>{nom}</option>)}
+              </select>
+              <select aria-label="Année de fin" value={anneeFin}
+                      onChange={(e) => choisirFin(Number(e.target.value), Number(dateFinAutre.slice(5, 7)) || 6)}>
+                {anneesFin.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            {dateFinAutre && (
+              <p className="aide">
+                Fin le {dateLisible(dateFinAutre)}.
+                {dateFinAutre !== finDuMois(dateFinAutre) && " Choisis le mois pour la mettre au dernier jour du mois."}
+              </p>
+            )}
           </>
         )}
         {duree === "12" && dateFin && <p className="aide">Fin le {dateLisible(dateFin)}.</p>}

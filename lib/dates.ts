@@ -15,6 +15,12 @@ export function finApresMois(debut: string, mois: number): string {
   return versIso(new Date(a, m - 1 + mois, j - 1));
 }
 
+/** Fin d'un bail de n mois, toujours au dernier jour du mois (v0.9.8) :
+ *  2026-07-01 + 12 → 2027-06-30 ; 2026-07-15 + 12 → 2027-07-31 */
+export function finBail(debut: string, mois: number): string {
+  return finDuMois(finApresMois(debut, mois));
+}
+
 /** Prochain 1er juillet (date de début la plus courante au Québec) */
 export function prochainPremierJuillet(): string {
   const d = new Date();
