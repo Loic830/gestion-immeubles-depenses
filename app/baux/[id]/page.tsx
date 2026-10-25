@@ -10,7 +10,7 @@ import DocumentsBail from "@/components/DocumentsBail";
 import { nouveauLocataire, type LocataireForm } from "@/components/FormulaireBail";
 import { LIBELLE_ORIGINE, TITRE_COPIE, type OrigineBail } from "@/lib/baux";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible, lendemain, veille, finDuMois, finApresMois } from "@/lib/dates";
+import { aujourdhuiIso, dateLisible, moisLisible, lendemain, veille, finDuMois, finApresMois, moisEchus } from "@/lib/dates";
 
 type Bail = {
   id: string;
@@ -78,6 +78,10 @@ export default function DetailBail() {
   const [renouvDebut, setRenouvDebut] = useState("");
   const [renouvMois, setRenouvMois] = useState("12");
   const [envoiRenouv, setEnvoiRenouv] = useState(false);
+  // v0.9.6 : renouvellement dans le passé (historique) → mois déjà payés
+  const [renouvPayes, setRenouvPayes] = useState(true);
+  const [renouvExclus, setRenouvExclus] = useState<string[]>([]);
+  const [envoiLien, setEnvoiLien] = useState(false);
   // Céder le bail (v0.9.5) : le bail continue au nom d'un nouveau locataire
   const [cessionOuverte, setCessionOuverte] = useState(false);
   const [cessionMois, setCessionMois] = useState("");
@@ -139,7 +143,38 @@ export default function DetailBail() {
     setRenouvLoyer(centsVersSaisie(soldes[soldes.length - 1]?.loyer_cents ?? bail.loyer_cents));
     setRenouvDebut(lendemain(bail.date_fin));
     setRenouvMois("12");
+    setRenouvPayes(true);
+    setRenouvExclus([]);
     setRenouvOuvert(true);
+  }
+
+  // Bail qui suit celui-ci dans le logement (v0.9.6) : son renouvellement (ou sa cession),
+  // sinon le prochain bail après sa fin, s'il y en a un.
+  const suiteDuBail = bail ? autresBaux.find((a) => a.bail_precedent_id === bail.id) ?? null : null;
+  const prochainBail = bail?.date_fin
+    ? autresBaux.filter((a) => a.date_debut > (bail.date_fin ?? "")).sort((x, y) => x.date_debut.localeCompare(y.date_debut))[0] ?? null
+    : null;
+  // Fin du nouveau bail : la durée choisie, sans dépasser la veille du bail suivant
+  const finRenouvellement = (() => {
+    if (!renouvDebut || !(Number(renouvMois) >= 1)) return null;
+    const fin = finApresMois(renouvDebut, Number(renouvMois));
+    return prochainBail && fin >= prochainBail.date_debut ? veille(prochainBail.date_debut) : fin;
+  })();
+  const renouvPasses = renouvOuvert && bail ? moisEchus(renouvDebut, finRenouvellement, bail.jour_echeance) : [];
+  const renouvAPayer = renouvPayes ? renouvPasses.filter((m) => !renouvExclus.includes(m)) : [];
+
+  async function lierAuSuivant() {
+    if (!bail || !prochainBail) return;
+    if (!window.confirm(
+      `Le bail du ${dateLisible(prochainBail.date_debut)} (${prochainBail.locataires ?? "locataire"}) devient le renouvellement de ce bail. ` +
+      "Le dossier prêteur joindra les deux copies."
+    )) return;
+    setErreur(null);
+    setEnvoiLien(true);
+    const { error } = await supabase.rpc("lier_renouvellement", { p_bail: bail.id, p_suivant: prochainBail.id });
+    setEnvoiLien(false);
+    if (error) return setErreur(error.message);
+    charger();
   }
 
   async function enregistrerRenouvellement() {
@@ -149,16 +184,21 @@ export default function DetailBail() {
     if (!renouvDebut) return setErreur("Entre la date de début du nouveau bail.");
     const mois = Number(renouvMois);
     if (!Number.isInteger(mois) || mois < 1 || mois > 120) return setErreur("Entre une durée en mois (ex. 12).");
-    const finNouveau = finApresMois(renouvDebut, mois);
+    const finNouveau = finRenouvellement ?? finApresMois(renouvDebut, mois);
+    if (prochainBail && renouvDebut >= prochainBail.date_debut) {
+      return setErreur(`Le bail suivant commence le ${dateLisible(prochainBail.date_debut)} : le renouvellement doit commencer avant.`);
+    }
     if (!window.confirm(
       `Nouveau bail du ${dateLisible(renouvDebut)} au ${dateLisible(finNouveau)} à ${formatCents(cents)} par mois` +
       (bail.extras_cents ? ` (plus ${formatCents(bail.extras_cents)} d'extras et crédits, gardés)` : "") +
-      ". Mêmes locataires, même mode et même jour de paiement."
+      ". Mêmes locataires, même mode et même jour de paiement." +
+      (renouvAPayer.length ? ` ${renouvAPayer.length} mois passé${renouvAPayer.length > 1 ? "s" : ""} marqué${renouvAPayer.length > 1 ? "s" : ""} payé${renouvAPayer.length > 1 ? "s" : ""}.` : "")
     )) return;
     setErreur(null);
     setEnvoiRenouv(true);
     const { data: nouveauId, error } = await supabase.rpc("renouveler_bail", {
       p_bail: bail.id, p_date_debut: renouvDebut, p_date_fin: finNouveau, p_loyer_cents: cents,
+      p_mois_payes: renouvAPayer,
     });
     setEnvoiRenouv(false);
     if (error) return setErreur(error.message);
@@ -424,29 +464,51 @@ export default function DetailBail() {
             )}
           </section>
 
-          {/* Renouvellement : le bail qui suit celui-ci, s'il existe */}
+          {/* Renouvellement : le bail qui suit celui-ci, s'il existe. Aussi pour un bail terminé (v0.9.6 : historique) */}
           {(() => {
-            if (bail.statut !== "actif" || bail.date_depart || !bail.date_fin) return null;
-            const suivant = autresBaux
-              .filter((a) => a.date_debut > (bail.date_fin ?? ""))
-              .sort((x, y) => x.date_debut.localeCompare(y.date_debut))[0];
-            if (suivant) {
+            if (bail.date_depart || !bail.date_fin) return null;
+            if (suiteDuBail && suiteDuBail.origine !== "cession") {
               return (
                 <section className="carte">
                   <strong>Bail renouvelé</strong>
                   <p className="aide">
-                    Le bail suivant commence le {dateLisible(suivant.date_debut)}
-                    {suivant.date_fin ? ` et se termine le ${dateLisible(suivant.date_fin)}` : ""}.
+                    Le bail suivant commence le {dateLisible(suiteDuBail.date_debut)}
+                    {suiteDuBail.date_fin ? ` et se termine le ${dateLisible(suiteDuBail.date_fin)}` : ""}.
                   </p>
-                  <Link className="bouton plein" style={{ textAlign: "center" }} href={`/baux/${suivant.id}`}>Voir le nouveau bail</Link>
+                  <Link className="bouton plein" style={{ textAlign: "center" }} href={`/baux/${suiteDuBail.id}`}>Voir le nouveau bail</Link>
                 </section>
               );
             }
-            const finNouveau = renouvDebut && Number(renouvMois) >= 1 ? finApresMois(renouvDebut, Number(renouvMois)) : null;
+            // Un bail commence dès le lendemain de la fin : pas de place pour un renouvellement entre les deux
+            if (prochainBail && prochainBail.date_debut <= lendemain(bail.date_fin)) {
+              return (
+                <section className="carte">
+                  <strong>Bail suivant</strong>
+                  <p className="aide">
+                    {prochainBail.locataires ?? "Un bail"} à partir du {dateLisible(prochainBail.date_debut)}
+                    {prochainBail.date_fin ? ` jusqu'au ${dateLisible(prochainBail.date_fin)}` : ""}.
+                    {!prochainBail.bail_precedent_id && " Si c'est le renouvellement de ce bail (mêmes locataires), touche « C'est un renouvellement de ce bail »."}
+                  </p>
+                  <Link className="bouton plein" style={{ textAlign: "center" }} href={`/baux/${prochainBail.id}`}>Voir le bail suivant</Link>
+                  {!prochainBail.bail_precedent_id && (
+                    <button className="bouton principal plein" style={{ marginTop: 10 }} onClick={lierAuSuivant} disabled={envoiLien}>
+                      {envoiLien ? "Enregistrement…" : "C'est un renouvellement de ce bail"}
+                    </button>
+                  )}
+                </section>
+              );
+            }
             return (
               <section className="carte">
                 {!renouvOuvert ? (
-                  <button className="bouton principal plein" onClick={ouvrirRenouvellement}>Renouveler le bail</button>
+                  <>
+                    {bail.statut === "termine" && (
+                      <p className="aide" style={{ marginTop: 0 }}>
+                        Bail terminé : pour entrer l&apos;historique, renouvelle-le avec les dates passées.
+                      </p>
+                    )}
+                    <button className="bouton principal plein" onClick={ouvrirRenouvellement}>Renouveler le bail</button>
+                  </>
                 ) : (
                   <>
                     <strong>Renouveler le bail</strong>
@@ -455,15 +517,47 @@ export default function DetailBail() {
                            onChange={(e) => setRenouvLoyer(e.target.value)} />
                     <label htmlFor="renouv-debut">Début</label>
                     <input id="renouv-debut" type="date" value={renouvDebut} min={lendemain(bail.date_fin)}
+                           max={prochainBail ? veille(prochainBail.date_debut) : undefined}
                            onChange={(e) => setRenouvDebut(e.target.value)} />
                     <label htmlFor="renouv-mois">Durée (mois)</label>
                     <input id="renouv-mois" inputMode="numeric" value={renouvMois}
                            onChange={(e) => setRenouvMois(e.target.value.replace(/\D/g, ""))} />
                     <p className="aide">
-                      {finNouveau ? `Fin du nouveau bail : ${dateLisible(finNouveau)}. ` : ""}
+                      {finRenouvellement ? `Fin du nouveau bail : ${dateLisible(finRenouvellement)}. ` : ""}
+                      {prochainBail && `Le bail suivant commence le ${dateLisible(prochainBail.date_debut)} : la fin ne peut pas dépasser la veille. `}
                       Mêmes locataires, extras et crédits, mode et jour de paiement. Le bail actuel n&apos;est pas touché.
                       Pour changer autre chose, touche « Modifier le bail » sur le nouveau bail.
                     </p>
+                    {renouvPasses.length > 0 && (
+                      <>
+                        <label className="case">
+                          <input type="checkbox" checked={renouvPayes} onChange={(e) => setRenouvPayes(e.target.checked)} />
+                          <span>Tous les mois passés sont payés</span>
+                        </label>
+                        {renouvPayes ? (
+                          <>
+                            <p className="aide">Sauf : touche un mois pour l&apos;exclure (il restera à payer dans Loyers).</p>
+                            <div className="puces">
+                              {renouvPasses.map((m) => {
+                                const exclu = renouvExclus.includes(m);
+                                return (
+                                  <span key={m} className={`puce${exclu ? "" : " actif"}`}>
+                                    <button type="button" aria-pressed={!exclu}
+                                            style={exclu ? { textDecoration: "line-through", color: "var(--discret)" } : undefined}
+                                            onClick={() => setRenouvExclus((a) => (exclu ? a.filter((x) => x !== m) : [...a, m]))}>
+                                      {moisLisible(m)}
+                                    </button>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <p className="aide"><strong>{renouvAPayer.length} mois sur {renouvPasses.length}</strong> seront marqués payés dans Loyers.</p>
+                          </>
+                        ) : (
+                          <p className="aide">Les {renouvPasses.length} mois passés resteront à payer dans Loyers.</p>
+                        )}
+                      </>
+                    )}
                     <div className="rangee">
                       <button className="bouton" onClick={() => setRenouvOuvert(false)} disabled={envoiRenouv}>Annuler</button>
                       <button className="bouton principal" onClick={enregistrerRenouvellement} disabled={envoiRenouv}>
