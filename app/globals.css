@@ -526,3 +526,8 @@ input.interrupteur:checked::after { transform: translateX(20px); }
 .boutons-contact { display: flex; gap: 8px; margin-top: 10px; }
 .boutons-contact .bouton { flex: 1; text-align: center; text-decoration: none; }
 .legende-nom small { white-space: nowrap; }
+
+/* Détail d'un paiement de loyer (v0.9.7) */
+button.liste-depense { border-bottom: 1px solid var(--bordure); }
+button.paiement-ligne { text-align: left; }
+.lien-modifier { font-size: 14px; color: var(--accent); white-space: nowrap; flex-shrink: 0; }

@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { DOCUMENTS_BAIL } from "@/lib/documents";
 import DocumentsBail from "@/components/DocumentsBail";
+import FeuilleLoyer from "@/components/FeuilleLoyer";
 import { nouveauLocataire, type LocataireForm } from "@/components/FormulaireBail";
 import { LIBELLE_ORIGINE, TITRE_COPIE, type OrigineBail } from "@/lib/baux";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
@@ -58,6 +59,8 @@ export default function DetailBail() {
   const [suppression, setSuppression] = useState(false);
   const [changements, setChangements] = useState<Changement[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
+  // Mois de loyer ouvert (v0.9.7) : détail et modification des paiements
+  const [moisOuvert, setMoisOuvert] = useState<string | null>(null);
   // Formulaire « Modifier le prix du loyer »
   const [changementOuvert, setChangementOuvert] = useState(false);
   const [nouveauLoyer, setNouveauLoyer] = useState("");
@@ -715,7 +718,7 @@ export default function DetailBail() {
               <span className="aide" style={{ margin: 0 }}>{formatCents(totalRecu)} reçus sur {formatCents(totalDu)}</span>
             </div>
             {soldes.map((s) => (
-              <div className="liste-depense" key={s.echeance_id}>
+              <button className="liste-depense lien-ligne" key={s.echeance_id} onClick={() => setMoisOuvert(s.echeance_id)}>
                 <div className="infos">
                   <div className="titre" style={{ textTransform: "capitalize" }}>{moisLisible(s.mois)}</div>
                   {s.en_main_cents > 0 && <div className="sous">Chèque en main : {formatCents(s.en_main_cents)}</div>}
@@ -731,10 +734,11 @@ export default function DetailBail() {
                       ? <span className="pastille vacant">Retard {s.jours_retard} j</span>
                       : s.recu_cents > 0 ? <span className="pastille">Partiel</span> : null}
                 </div>
-              </div>
+              </button>
             ))}
-            <p className="aide">Pour enregistrer un paiement ou un crédit : onglet <Link href="/loyers">Loyers</Link>.</p>
+            <p className="aide">Touche un mois pour voir ses paiements, les modifier ou en ajouter un.</p>
           </section>
+          {moisOuvert && <FeuilleLoyer echeanceId={moisOuvert} depuisBail onFermer={() => setMoisOuvert(null)} onChange={charger} />}
 
           <button className="bouton plein lien-danger" onClick={supprimer} disabled={suppression}>
             {suppression ? "Suppression…" : "Supprimer ce bail (erreur de saisie)"}

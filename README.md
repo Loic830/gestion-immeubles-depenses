@@ -112,6 +112,7 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `components/FeuilleReleve.tsx` | Intérêts selon le relevé annuel du prêteur (a priorité sur le calcul) |
 | `components/FeuilleAssurance.tsx` | Police d'assurance (terme, prime, PDF dans documents) ; renouvellement |
 | `components/FeuilleTaxes.tsx` | Compte de taxes foncières ou scolaires et ses versements |
+| `components/FeuilleLoyer.tsx` | Feuille d'un mois de loyer (onglet Loyers et fiche du bail) : détail du mois, paiements et crédits, ajout ; toucher un paiement = détail à modifier ou annuler (v0.9.7) |
 | `components/FeuillePaiement.tsx` | « Payé » : date + dépense correspondante dans Dépenses (RPC payer_frais_fixe) |
 | `lib/amortissement.ts` | Ventilation capital / intérêts : taux fixe composé semestriellement, versements mensuels |
 | `lib/fraisFixes.ts` | Types, intérêts de l'année (relevé prioritaire), statuts des versements, totaux par immeuble |
@@ -439,6 +440,17 @@ Pour entrer les baux passés d'un logement : entrer le plus vieux bail avec « N
 - Quand le bail suivant commence le lendemain mais n'est pas rattaché (entré avec « Nouveau bail »), la carte « Bail suivant »
   offre « C'est un renouvellement de ce bail » (`lier_renouvellement`) : il passe en type « renouvellement » et le dossier
   prêteur joint toute la chaîne.
+
+## Détail d'un paiement de loyer (v0.9.7)
+
+- Fiche du bail, section « Loyers dus » : toucher un mois ouvre la même feuille que dans l'onglet Loyers
+  (`components/FeuilleLoyer.tsx`, partagée) : dû du mois (loyer + extras, note du mois), paiements et crédits, ajout d'un
+  paiement ou d'un crédit, Appeler / Texter si en retard. Le lien « Voir le bail » est caché quand on y est déjà.
+- Toucher un paiement ouvre son détail : montant, mode, statut (Reçu, Chèque en main, Sans provision), date reçue
+  (ou date du chèque en main), no de chèque / virement, note ; « Enregistrer les changements » ou « Annuler ce paiement
+  (erreur de saisie) » (suppression douce). Un crédit garde son mode ; on modifie montant, raison (obligatoire) et date.
+- Mise à jour directe de `paiements` (RLS, `updated_at` par trigger) ; pas de migration. `v_soldes` ne compte que le statut
+  `recu` : un chèque en main ou sans provision remet le mois à payer.
 
 ## Thème
 

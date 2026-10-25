@@ -5,52 +5,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
-import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
-import { aujourdhuiIso, dateLisible, moisLisible, triNumero } from "@/lib/dates";
+import { formatCents } from "@/lib/argent";
+import { aujourdhuiIso, moisLisible, triNumero } from "@/lib/dates";
 import BarreOnglets from "@/components/BarreOnglets";
 import { Anneau, couleur } from "@/components/Graphiques";
+import FeuilleLoyer, { lienTexto, numero, type Solde } from "@/components/FeuilleLoyer";
 
-/** Numéro pour tel: et sms: (chiffres et +) */
-const numero = (t: string) => t.replace(/[^\d+]/g, "");
-/** Texto de rappel prérempli ; l'app Messages s'ouvre, rien n'est envoyé sans toucher Envoyer */
-function lienTexto(s: Solde): string {
-  const prenom = (s.locataires ?? "").split(",")[0].trim().split(" ")[0];
-  const texte = `Bonjour${prenom ? ` ${prenom}` : ""}, petit rappel : le loyer de ${moisLisible(s.mois)} pour le logement ${s.logement}`
-    + ` (${formatCents(s.solde_cents)}) n'est pas encore reçu. Merci de me faire signe.`;
-  // iPhone : sms:numéro&body=…
-  return `sms:${numero(s.telephone ?? "")}&body=${encodeURIComponent(texte)}`;
-}
-
-type Mode = "interac" | "cheque" | "prelevement" | "comptant" | "credit";
-type Solde = {
-  echeance_id: string;
-  mois: string;
-  montant_du_cents: number;
-  recu_cents: number;
-  en_main_cents: number;
-  solde_cents: number;
-  jours_retard: number;
-  date_echeance: string;
-  bail_id: string;
-  mode_paiement: Mode;
-  logement_id: string;
-  logement: string;
-  immeuble_id: string;
-  immeuble: string;
-  locataires: string | null;
-  telephone: string | null;
-};
-type Paiement = { id: string; montant_cents: number; mode: Mode; statut: string; date_recue: string | null; reference: string | null; notes: string | null };
 type Logement = { id: string; immeuble_id: string; numero: string };
 type Immeuble = { id: string; nom: string };
-
-const MODES: { code: Mode; libelle: string }[] = [
-  { code: "interac", libelle: "Interac" },
-  { code: "cheque", libelle: "Chèque" },
-  { code: "prelevement", libelle: "Prélèvement" },
-  { code: "comptant", libelle: "Comptant" },
-];
-const libelleMode = (m: Mode) => (m === "credit" ? "Crédit" : MODES.find((x) => x.code === m)?.libelle ?? m);
 
 function moisCourant(): string {
   return aujourdhuiIso().slice(0, 7) + "-01";
@@ -84,20 +46,10 @@ function Loyers() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  // Feuille de paiement
-  const [choisie, setChoisie] = useState<Solde | null>(null);
-  const [paiements, setPaiements] = useState<Paiement[]>([]);
-  const [montantSaisi, setMontantSaisi] = useState("");
-  const [mode, setMode] = useState<Mode>("interac");
-  const [dateRecue, setDateRecue] = useState(aujourdhuiIso());
-  const [reference, setReference] = useState("");
-  const [envoi, setEnvoi] = useState(false);
-  // Crédit au locataire (ex. achat remboursé sur le loyer)
-  const [creditOuvert, setCreditOuvert] = useState(false);
+  // Feuille du mois (paiements, crédit, détail d'un paiement : components/FeuilleLoyer)
+  const [choisie, setChoisie] = useState<string | null>(null);
   // Encadré du haut : total, ou ventilé par immeuble quand on le touche
   const [parImmeuble, setParImmeuble] = useState(false);
-  const [montantCredit, setMontantCredit] = useState("");
-  const [raisonCredit, setRaisonCredit] = useState("");
 
   const charger = useCallback(async () => {
     setErreur(null);
@@ -137,81 +89,7 @@ function Loyers() {
     })();
   }, [session, charger]);
 
-  async function ouvrir(s: Solde) {
-    setChoisie(s);
-    setMontantSaisi(centsVersSaisie(Math.max(s.solde_cents, 0)));
-    setMode(s.mode_paiement);
-    setDateRecue(aujourdhuiIso());
-    setReference("");
-    setCreditOuvert(false);
-    setMontantCredit("");
-    setRaisonCredit("");
-    const { data } = await supabase
-      .from("paiements")
-      .select("id, montant_cents, mode, statut, date_recue, reference, notes")
-      .eq("echeance_id", s.echeance_id)
-      .is("deleted_at", null)
-      .order("created_at");
-    setPaiements((data ?? []) as Paiement[]);
-  }
-
-  async function enregistrerPaiement() {
-    if (!choisie) return;
-    const cents = versCents(montantSaisi);
-    if (cents === null || cents <= 0) return setErreur("Entre un montant valide (ex. 950,00).");
-    setEnvoi(true);
-    const { error } = await supabase.from("paiements").insert({
-      echeance_id: choisie.echeance_id,
-      montant_cents: cents,
-      mode,
-      statut: "recu",
-      date_recue: dateRecue,
-      reference: reference.trim() || null,
-    });
-    setEnvoi(false);
-    if (error) return setErreur(error.message);
-    setChoisie(null);
-    await charger();
-  }
-
-  // Rouvre la feuille avec le solde à jour (après un crédit, on enregistre souvent le reste tout de suite)
-  async function rafraichirChoisie(echeanceId: string) {
-    const { data } = await supabase.from("v_soldes").select("*").eq("echeance_id", echeanceId).single();
-    if (data) await ouvrir(data as Solde);
-    else setChoisie(null);
-  }
-
-  async function enregistrerCredit() {
-    if (!choisie) return;
-    const cents = versCents(montantCredit);
-    if (cents === null || cents <= 0) return setErreur("Entre le montant du crédit (ex. 150,00).");
-    if (!raisonCredit.trim()) return setErreur("Indique la raison du crédit (ex. porte achetée par le locataire).");
-    if (cents > choisie.solde_cents && !window.confirm(
-      `Le crédit (${formatCents(cents)}) dépasse le solde du mois (${formatCents(choisie.solde_cents)}). Continuer ?`
-    )) return;
-    setErreur(null);
-    setEnvoi(true);
-    const { error } = await supabase.from("paiements").insert({
-      echeance_id: choisie.echeance_id,
-      montant_cents: cents,
-      mode: "credit",
-      statut: "recu",
-      date_recue: dateRecue,
-      notes: raisonCredit.trim(),
-    });
-    setEnvoi(false);
-    if (error) return setErreur(error.message);
-    await charger();
-    await rafraichirChoisie(choisie.echeance_id);
-  }
-
-  async function annulerPaiement(p: Paiement) {
-    if (!window.confirm(`Annuler ce paiement de ${formatCents(p.montant_cents)} ? (erreur de saisie)`)) return;
-    const { error } = await supabase.from("paiements").update({ deleted_at: new Date().toISOString() }).eq("id", p.id);
-    if (error) return setErreur(error.message);
-    if (choisie) await ouvrir(choisie);
-    await charger();
-  }
+  const ouvrir = (s: Solde) => setChoisie(s.echeance_id);
 
   const totaux = useMemo(() => ({
     depots: soldesMois.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
@@ -372,88 +250,8 @@ function Loyers() {
         );
       })}
 
-      {/* Feuille de paiement */}
-      {choisie && (
-        <div className="voile" onClick={() => setChoisie(null)}>
-          <div className="feuille" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Enregistrer un paiement">
-            <div className="entete" style={{ marginBottom: 4 }}>
-              <strong>{choisie.immeuble} · {choisie.logement}</strong>
-              <button className="lien-retirer" style={{ color: "var(--discret)" }} onClick={() => setChoisie(null)}>Fermer</button>
-            </div>
-            <div className="aide" style={{ marginTop: 0 }}>
-              {choisie.locataires} · <span style={{ textTransform: "capitalize" }}>{moisLisible(choisie.mois)}</span> · dû {formatCents(choisie.montant_du_cents)}
-            </div>
-
-            {choisie.jours_retard > 0 && choisie.telephone && (
-              <div className="boutons-contact">
-                <a className="bouton" href={`tel:${numero(choisie.telephone)}`}>Appeler</a>
-                <a className="bouton" href={lienTexto(choisie)}>Texter</a>
-              </div>
-            )}
-
-            {paiements.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                {paiements.map((p) => (
-                  <div className="paiement-ligne" key={p.id}>
-                    <span>
-                      {formatCents(p.montant_cents)} · {libelleMode(p.mode)}{p.date_recue ? ` · ${dateLisible(p.date_recue)}` : ""}{p.reference ? ` · ${p.reference}` : ""}
-                      {p.mode === "credit" && p.notes ? <span className="aide" style={{ display: "block", margin: 0 }}>{p.notes}</span> : null}
-                    </span>
-                    <button className="lien-retirer" onClick={() => annulerPaiement(p)}>Annuler</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {choisie.solde_cents > 0 ? (
-              <>
-                <label htmlFor="montant">Montant reçu</label>
-                <input id="montant" className="montant-total" inputMode="decimal" value={montantSaisi} onChange={(e) => setMontantSaisi(e.target.value)} />
-                <div className="choix-2" style={{ marginTop: 8 }}>
-                  {MODES.map((m) => (
-                    <button key={m.code} type="button" className={mode === m.code ? "actif" : ""} onClick={() => setMode(m.code)}>{m.libelle}</button>
-                  ))}
-                </div>
-                <div className="rangee" style={{ marginTop: 8 }}>
-                  <input type="date" value={dateRecue} onChange={(e) => setDateRecue(e.target.value)} aria-label="Date reçue" />
-                  <input placeholder="No chèque / virement" value={reference} onChange={(e) => setReference(e.target.value)} />
-                </div>
-                <button className="bouton principal plein" style={{ marginTop: 12 }} onClick={enregistrerPaiement} disabled={envoi}>
-                  {envoi ? "Enregistrement…" : versCents(montantSaisi) === choisie.solde_cents ? "Reçu" : "Enregistrer ce montant"}
-                </button>
-
-                {!creditOuvert ? (
-                  <button className="lien-filtres" style={{ margin: "10px auto 0" }} onClick={() => setCreditOuvert(true)}>
-                    + Crédit au locataire (achat, réparation…)
-                  </button>
-                ) : (
-                  <div className="bloc-locataire">
-                    <strong>Crédit au locataire</strong>
-                    <p className="aide" style={{ marginTop: 2 }}>
-                      Le montant est déduit de ce que le locataire doit payer ce mois-ci. Le loyer reste inscrit au complet.
-                    </p>
-                    <label htmlFor="montant-credit">Montant du crédit</label>
-                    <input id="montant-credit" inputMode="decimal" placeholder="ex. 150,00" value={montantCredit}
-                           onChange={(e) => setMontantCredit(e.target.value)} />
-                    <label htmlFor="raison-credit">Raison</label>
-                    <input id="raison-credit" placeholder="ex. Porte achetée par le locataire" value={raisonCredit}
-                           onChange={(e) => setRaisonCredit(e.target.value)} />
-                    <div className="rangee" style={{ marginTop: 8 }}>
-                      <button className="bouton" onClick={() => setCreditOuvert(false)} disabled={envoi}>Annuler</button>
-                      <button className="bouton principal" onClick={enregistrerCredit} disabled={envoi}>
-                        {envoi ? "Enregistrement…" : "Enregistrer le crédit"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="aide" style={{ color: "var(--succes)", fontWeight: 600 }}>Ce loyer est payé.</p>
-            )}
-            <Link href={`/baux/${choisie.bail_id}`} className="lien-filtres" style={{ textAlign: "center" }}>Voir le bail</Link>
-          </div>
-        </div>
-      )}
+      {/* Feuille du mois */}
+      {choisie && <FeuilleLoyer echeanceId={choisie} onFermer={() => setChoisie(null)} onChange={charger} />}
 
       <BarreOnglets />
     </main>
