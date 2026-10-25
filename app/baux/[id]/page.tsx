@@ -93,6 +93,7 @@ export default function DetailBail() {
   // v0.9.9 : cession dans le passé (historique) → mois déjà payés par le nouveau locataire
   const [cessionPayes, setCessionPayes] = useState(true);
   const [cessionExclus, setCessionExclus] = useState<string[]>([]);
+  const [envoiLienCession, setEnvoiLienCession] = useState(false);
 
   const charger = useCallback(async () => {
     if (!id) return;
@@ -168,6 +169,29 @@ export default function DetailBail() {
   })();
   const renouvPasses = renouvOuvert && bail ? moisEchus(renouvDebut, finRenouvellement, bail.jour_echeance) : [];
   const renouvAPayer = renouvPayes ? renouvPasses.filter((m) => !renouvExclus.includes(m)) : [];
+
+  // Cession possible (v0.9.9) : pas de départ, pas de suite, au moins un mois après le début
+  const cessionPossible = !!bail && !bail.date_depart && !suiteDuBail && soldes.some((s) => s.mois > bail.date_debut);
+  // Bail qui finit la veille du début de celui-ci, pas encore rattaché : ce bail en est peut-être la cession
+  const bailPrecedentLibre = bail && !bail.bail_precedent_id
+    ? autresBaux.find((a) => (a.date_depart ?? a.date_fin) === veille(bail.date_debut)
+        && !autresBaux.some((x) => x.bail_precedent_id === a.id)) ?? null
+    : null;
+
+  async function lierCommeCession() {
+    if (!bail || !bailPrecedentLibre) return;
+    if (!window.confirm(
+      `Ce bail devient la cession du bail de ${bailPrecedentLibre.locataires ?? "l'ancien locataire"} ` +
+      `(du ${dateLisible(bailPrecedentLibre.date_debut)}). Le dossier prêteur joindra les deux copies.`
+    )) return;
+    setErreur(null);
+    setEnvoiLienCession(true);
+    const { error } = await supabase.from("baux")
+      .update({ bail_precedent_id: bailPrecedentLibre.id, origine: "cession" }).eq("id", bail.id);
+    setEnvoiLienCession(false);
+    if (error) return setErreur(error.message);
+    charger();
+  }
 
   async function lierAuSuivant() {
     if (!bail || !prochainBail) return;
@@ -519,7 +543,7 @@ export default function DetailBail() {
                     {bail.statut === "termine" && (
                       <p className="aide" style={{ marginTop: 0 }}>
                         Bail terminé : pour entrer l&apos;historique, renouvelle-le avec les dates passées
-                        (ou fais la cession plus bas si un autre locataire l&apos;a pris en cours de bail).
+                        {cessionPossible ? " (ou fais la cession plus bas si un autre locataire l'a pris en cours de bail)" : ""}.
                       </p>
                     )}
                     <button className="bouton principal plein" onClick={ouvrirRenouvellement}>Renouveler le bail</button>
@@ -648,8 +672,33 @@ export default function DetailBail() {
             </section>
           )}
 
+          {/* Cession impossible sur un bail d'un seul mois : expliquer quoi faire (v0.9.9) */}
+          {!bail.date_depart && !suiteDuBail && !cessionPossible && (bail.statut === "termine" || bailPrecedentLibre) && (
+            <section className="carte">
+              <strong>Cession de bail</strong>
+              <p className="aide">
+                Ce bail n&apos;a qu&apos;un mois : il n&apos;y a pas de date pour une cession (elle se fait le 1er d&apos;un mois après le début du bail).
+              </p>
+              <p className="aide">
+                <strong>Le locataire a cédé son bail à quelqu&apos;un d&apos;autre ?</strong> Touche « Modifier le bail » en haut et mets la vraie
+                fin du bail (celle du bail signé). Le bouton « Cession de bail » apparaîtra ensuite ici.
+              </p>
+              <p className="aide">
+                <strong>Ce locataire a pris le bail d&apos;un ancien locataire ?</strong>{" "}
+                {bailPrecedentLibre
+                  ? `Le bail de ${bailPrecedentLibre.locataires ?? "l'ancien locataire"} finit la veille : touche le bouton ci-dessous pour dire que ce bail en est la cession.`
+                  : "Ouvre le bail de l'ancien locataire (bouton « Historique ») et fais la cession à partir de ce bail-là."}
+              </p>
+              {bailPrecedentLibre && (
+                <button className="bouton plein" onClick={lierCommeCession} disabled={envoiLienCession}>
+                  {envoiLienCession ? "Enregistrement…" : "C'est une cession de ce bail précédent"}
+                </button>
+              )}
+            </section>
+          )}
+
           {/* Cession de bail (v0.9.5) ; aussi pour un bail terminé (v0.9.9 : historique) */}
-          {!bail.date_depart && !suiteDuBail && soldes.some((s) => s.mois > bail.date_debut) && (
+          {cessionPossible && (
             <section className="carte">
               {!cessionOuverte ? (
                 <>

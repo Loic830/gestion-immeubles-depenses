@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **25 octobre 2026**, version **0.9.9**.
+> ou par une nouvelle conversation avec Claude. État au **25 octobre 2026**, version **0.9.9.1**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -256,6 +256,11 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.9.1, correctif)**
+- Rien à exécuter dans Supabase. Décompresser, `npm run build`, pousser. Demande de Maxime du 25 oct. : sur le bail de Simon Beson
+  (février 2026 seulement), le texte parlait de cession sans bouton. Maintenant une carte explique pourquoi (un seul mois) et quoi
+  faire : allonger la fin dans « Modifier le bail », ou « C'est une cession de ce bail précédent » si un bail finit la veille.
 
 **À faire par Loïc (v0.9.9)**
 - Exécuter `020_ceder_bail_termine.sql`. Sans elle, « Céder le bail » affiche une erreur (la fonction à 4 arguments est introuvable).
