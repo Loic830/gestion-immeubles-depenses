@@ -90,6 +90,9 @@ export default function DetailBail() {
   const [cessionMois, setCessionMois] = useState("");
   const [cessionnaires, setCessionnaires] = useState<LocataireForm[]>([]);
   const [envoiCession, setEnvoiCession] = useState(false);
+  // v0.9.9 : cession dans le passé (historique) → mois déjà payés par le nouveau locataire
+  const [cessionPayes, setCessionPayes] = useState(true);
+  const [cessionExclus, setCessionExclus] = useState<string[]>([]);
 
   const charger = useCallback(async () => {
     if (!id) return;
@@ -215,8 +218,14 @@ export default function DetailBail() {
     // Par défaut : le mois prochain
     setCessionMois(possibles.find((s) => s.mois > debutMois)?.mois ?? possibles[possibles.length - 1]?.mois ?? "");
     setCessionnaires([nouveauLocataire()]);
+    setCessionPayes(true);
+    setCessionExclus([]);
     setCessionOuverte(true);
   }
+
+  // Mois du nouveau bail déjà échus (cession dans le passé)
+  const cessionPasses = cessionOuverte && bail && cessionMois ? moisEchus(cessionMois, bail.date_fin, bail.jour_echeance) : [];
+  const cessionAPayer = cessionPayes ? cessionPasses.filter((m) => !cessionExclus.includes(m)) : [];
 
   async function enregistrerCession() {
     if (!bail) return;
@@ -231,7 +240,8 @@ export default function DetailBail() {
       `Le bail de ${bail.date_fin ? `jusqu'au ${dateLisible(bail.date_fin)}` : "durée indéterminée"} passe à ${noms} le ${dateLisible(cessionMois)}` +
       (loyer ? `, au même loyer (${formatCents(loyer.montant_du_cents)} par mois)` : "") +
       `. Le bail actuel se termine le ${dateLisible(veille(cessionMois))} ; ` +
-      "les mois passés et les paiements restent à son nom."
+      "les mois avant la cession et leurs paiements restent à son nom." +
+      (cessionAPayer.length ? ` ${cessionAPayer.length} mois passé${cessionAPayer.length > 1 ? "s" : ""} du nouveau locataire marqué${cessionAPayer.length > 1 ? "s" : ""} payé${cessionAPayer.length > 1 ? "s" : ""}.` : "")
     )) return;
     setErreur(null);
     setEnvoiCession(true);
@@ -240,6 +250,7 @@ export default function DetailBail() {
       p_locataires: remplis.map((l) => ({
         prenom: l.prenom.trim(), nom: l.nom.trim(), telephone: l.telephone.trim() || null, courriel: l.courriel.trim() || null,
       })),
+      p_mois_payes: cessionAPayer,
     });
     setEnvoiCession(false);
     if (error) return setErreur(error.message);
@@ -507,7 +518,8 @@ export default function DetailBail() {
                   <>
                     {bail.statut === "termine" && (
                       <p className="aide" style={{ marginTop: 0 }}>
-                        Bail terminé : pour entrer l&apos;historique, renouvelle-le avec les dates passées.
+                        Bail terminé : pour entrer l&apos;historique, renouvelle-le avec les dates passées
+                        (ou fais la cession plus bas si un autre locataire l&apos;a pris en cours de bail).
                       </p>
                     )}
                     <button className="bouton principal plein" onClick={ouvrirRenouvellement}>Renouveler le bail</button>
@@ -636,11 +648,18 @@ export default function DetailBail() {
             </section>
           )}
 
-          {/* Cession de bail (v0.9.5) */}
-          {bail.statut !== "termine" && !bail.date_depart && soldes.some((s) => s.mois > bail.date_debut) && (
+          {/* Cession de bail (v0.9.5) ; aussi pour un bail terminé (v0.9.9 : historique) */}
+          {!bail.date_depart && !suiteDuBail && soldes.some((s) => s.mois > bail.date_debut) && (
             <section className="carte">
               {!cessionOuverte ? (
-                <button className="bouton plein" onClick={ouvrirCession}>Cession de bail (nouveau locataire)</button>
+                <>
+                  {bail.statut === "termine" && (
+                    <p className="aide" style={{ marginTop: 0 }}>
+                      Un autre locataire a pris ce bail en cours de route ? Entre la cession avec la date passée.
+                    </p>
+                  )}
+                  <button className="bouton plein" onClick={ouvrirCession}>Cession de bail (nouveau locataire)</button>
+                </>
               ) : (
                 <>
                   <strong>Cession de bail</strong>
@@ -648,7 +667,7 @@ export default function DetailBail() {
                   <select id="cession-mois" value={cessionMois} onChange={(e) => setCessionMois(e.target.value)}>
                     {soldes.filter((s) => s.mois > bail.date_debut).map((s) => (
                       <option key={s.mois} value={s.mois}>
-                        1er {moisLisible(s.mois)}{s.recu_cents > 0 || s.en_main_cents > 0 ? " (déjà payé en partie ou au complet)" : ""}
+                        1er {moisLisible(s.mois)}{bail.statut !== "termine" && (s.recu_cents > 0 || s.en_main_cents > 0) ? " (déjà payé en partie ou au complet)" : ""}
                       </option>
                     ))}
                   </select>
@@ -679,7 +698,38 @@ export default function DetailBail() {
                     Le bail continue au nom du nouveau locataire : même loyer, même fin, mêmes extras, même mode de paiement.
                     Le bail actuel se termine la veille ; ses mois et paiements restent à son nom.
                     Ajoute ensuite la photo de l&apos;entente de cession sur le nouveau bail.
+                    {bail.statut === "termine" && " Les mois après la cession qui avaient été marqués payés automatiquement sur ce bail passent au nouveau locataire (selon la case ci-dessous)."}
                   </p>
+                  {cessionPasses.length > 0 && (
+                    <>
+                      <label className="case">
+                        <input type="checkbox" checked={cessionPayes} onChange={(e) => setCessionPayes(e.target.checked)} />
+                        <span>Tous les mois passés sont payés</span>
+                      </label>
+                      {cessionPayes ? (
+                        <>
+                          <p className="aide">Sauf : touche un mois pour l&apos;exclure (il restera à payer dans Loyers).</p>
+                          <div className="puces">
+                            {cessionPasses.map((m) => {
+                              const exclu = cessionExclus.includes(m);
+                              return (
+                                <span key={m} className={`puce${exclu ? "" : " actif"}`}>
+                                  <button type="button" aria-pressed={!exclu}
+                                          style={exclu ? { textDecoration: "line-through", color: "var(--discret)" } : undefined}
+                                          onClick={() => setCessionExclus((a) => (exclu ? a.filter((x) => x !== m) : [...a, m]))}>
+                                    {moisLisible(m)}
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                          <p className="aide"><strong>{cessionAPayer.length} mois sur {cessionPasses.length}</strong> seront marqués payés au nom du nouveau locataire.</p>
+                        </>
+                      ) : (
+                        <p className="aide">Les {cessionPasses.length} mois passés du nouveau locataire resteront à payer dans Loyers.</p>
+                      )}
+                    </>
+                  )}
                   <div className="rangee">
                     <button className="bouton" onClick={() => setCessionOuverte(false)} disabled={envoiCession}>Annuler</button>
                     <button className="bouton principal" onClick={enregistrerCession} disabled={envoiCession}>
