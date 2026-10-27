@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **26 octobre 2026**, version **0.9.14**.
+> ou par une nouvelle conversation avec Claude. État au **27 octobre 2026**, version **0.9.15**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -154,6 +154,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `components/ChoixAnnees.tsx` | feuille « Période » de l'onglet Baux (choix rapides, De … à …, grille des années, v0.9.11) |
 | `lib/omh.ts` | loyer avec subvention de l'OMH : part de l'OMH d'un bail, vérification de la migration 022, message d'erreur (v0.9.12) |
 | `lib/exportLoyers.ts` | Rapport d'impôts : revenus de loyers loyers_AAAA.xlsx (par immeuble, par mois ; locataire, OMH, crédits) (v0.9.12) |
+| `lib/exportPaiements.ts` | Rapport d'impôts : paiements_AAAA.xlsx pour balancer avec la banque (un dépôt par ligne selon la date du dépôt ; total par mois et par mode) (v0.9.15) |
 | `lib/paquets.ts` | lectures par paquets de 1000 lignes / lots de 100 identifiants (30 ans de baux, v0.9.11) |
 | `app/api/notifications/envoyer/route.ts` | seule route serveur : GET = Vercel Cron (calcul + envoi à tous), POST = envoi des tests de la personne connectée |
 | `public/sw.js` | service worker : affiche la notification ; la toucher ouvre `/` sans la marquer lue |
@@ -265,6 +266,11 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.15)**
+- Décompresser le ZIP 0.9.15, `npm run build`, pousser. Pas de migration. Demande de Maxime (27 oct.) : extraire les paiements
+  de l'année pour balancer avec ses comptes de banque → Profil > Rapport d'impôts > « Paiements reçus AAAA (Excel) ».
+- Rappel (27 oct.) : Maxime avait lancé 023 avant 022 (« column p.payeur does not exist ») ; réglé en lançant 022 puis 023.
 
 **À faire par Loïc (v0.9.14, remplace 0.9.13)**
 - Décompresser le ZIP 0.9.14 (il contient aussi tout 0.9.13), exécuter `023_mois_payes_suivent.sql` (ou la relancer si

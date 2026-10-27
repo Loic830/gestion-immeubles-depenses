@@ -78,6 +78,14 @@ export default function RapportImpots() {
       (r.omh ? `, dont ${formatCents(r.omh)} de l'OMH.` : ".");
   });
 
+  const exporterPaiements = () => lancer("paiements", async (etape) => {
+    const { exporterPaiementsAnnee } = await import("@/lib/exportPaiements");
+    const r = await exporterPaiementsAnnee(annee, etape);
+    const enMain = r.enMain ? ` ${r.enMain} chèque(s) encore en main ne sont pas comptés.` : "";
+    if (r.depots === 0) return `Aucun paiement reçu en ${annee}.${enMain}`;
+    return `Fichier créé : ${r.depots} dépôt(s), ${formatCents(r.total)} au total.${enMain}`;
+  });
+
   const exporterVehicule = (v: Vehicule) => lancer(v.id, async (etape) => {
     const { exporterDossierVehicule } = await import("@/lib/exportVehicule");
     const r = await exporterDossierVehicule({ id: v.id, nom: nomVehicule(v) }, annee, immeubles, etape);
@@ -114,6 +122,10 @@ export default function RapportImpots() {
         {libelle("loyers", `Revenus de loyers ${annee} (Excel)`)}
       </button>
       <p className="aide">Loyers dus et reçus par immeuble et par mois : part du locataire, supplément de l&apos;OMH et crédits.</p>
+      <button className="bouton plein" style={{ marginTop: 8 }} onClick={exporterPaiements} disabled={enCours !== null}>
+        {libelle("paiements", `Paiements reçus ${annee} (Excel)`)}
+      </button>
+      <p className="aide">Pour balancer avec la banque : un dépôt par ligne, selon la date du dépôt, et le total de chaque mois.</p>
 
       {vehicules.length > 0 && (
         <>
