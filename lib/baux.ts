@@ -1,8 +1,7 @@
-// Période de l'onglet Baux : une ou plusieurs années (année courante à année courante − 6).
+// Période de l'onglet Baux : une ou plusieurs années, de l'année du plus vieux bail à l'année courante (v0.9.11).
 // Un bail fait partie de la période s'il couvre au moins un jour d'une année choisie.
 // Les baux à venir (déjà signés) suivent l'année courante.
-
-export const NB_ANNEES = 7;
+// Dans l'adresse : ?a=tout (toutes les années), ?a=2016-2026 (plage), ?a=1998,2010-2012 (mélange).
 
 export type BailPeriode = {
   statut: "a_venir" | "actif" | "termine";
@@ -11,17 +10,60 @@ export type BailPeriode = {
   date_depart: string | null;
 };
 
-/** Années proposées : 2026, 2025, … 2020 */
-export function anneesProposees(): number[] {
-  const a = new Date().getFullYear();
-  return Array.from({ length: NB_ANNEES }, (_, i) => a - i);
+const PLUS_VIEILLE_ANNEE = 1900;
+
+export function anneeCourante(): number {
+  return new Date().getFullYear();
 }
 
-/** « 2024,2026 » (adresse) → [2026, 2024] ; vide ou invalide → année courante */
-export function lireAnnees(texte: string | null): number[] {
-  const permises = anneesProposees();
-  const liste = (texte ?? "").split(",").map(Number).filter((n) => permises.includes(n));
-  return liste.length ? Array.from(new Set(liste)).sort((x, y) => y - x) : [permises[0]];
+/** Années proposées : de l'année courante jusqu'à l'année du plus vieux bail (ex. 2026, 2025, … 1996) */
+export function anneesDisponibles(baux: { date_debut: string }[]): number[] {
+  const a = anneeCourante();
+  const premiere = baux.reduce((min, b) => Math.min(min, Number(b.date_debut.slice(0, 4)) || a), a);
+  const debut = Math.max(PLUS_VIEILLE_ANNEE, premiere);
+  return Array.from({ length: a - debut + 1 }, (_, i) => a - i);
+}
+
+/** « 2024,2026 », « 2016-2026 » ou « tout » (adresse) → [2026, 2024] ; vide ou invalide → année courante */
+export function lireAnnees(texte: string | null, disponibles: number[]): number[] {
+  if (texte === "tout") return disponibles;
+  const max = anneeCourante();
+  const liste: number[] = [];
+  for (const morceau of (texte ?? "").split(",")) {
+    const [x, y] = morceau.split("-").map(Number);
+    const de = Math.max(PLUS_VIEILLE_ANNEE, Math.min(x, y || x));
+    const a = Math.min(max, Math.max(x, y || x));
+    if (!Number.isInteger(de) || !Number.isInteger(a)) continue;
+    for (let n = de; n <= a; n++) liste.push(n);
+  }
+  return liste.length ? Array.from(new Set(liste)).sort((p, q) => q - p) : [max];
+}
+
+/** Années consécutives regroupées : [1998, 1999, 2000, 2010] → [[1998, 2000], [2010, 2010]] */
+function plages(annees: number[]): [number, number][] {
+  const t = Array.from(new Set(annees)).sort((x, y) => x - y);
+  const r: [number, number][] = [];
+  for (const a of t) {
+    const der = r[r.length - 1];
+    if (der && a === der[1] + 1) der[1] = a;
+    else r.push([a, a]);
+  }
+  return r;
+}
+
+/** Pour l'adresse : « tout » si toutes les années proposées, sinon « 1998-2000,2010 » ; null = année courante seule */
+export function ecrireAnnees(annees: number[], disponibles: number[]): string | null {
+  if (annees.length === 1 && annees[0] === anneeCourante()) return null;
+  if (disponibles.length > 1 && disponibles.every((a) => annees.includes(a))) return "tout";
+  return plages(annees).map(([de, a]) => (de === a ? String(de) : `${de}-${a}`)).join(",");
+}
+
+/** Années consécutives regroupées : [2026, 2025, 2024] → « 2024 à 2026 » ; [2026, 2023] → « 2023 et 2026 » ;
+ *  [1998, 1999, 2000, 2005, 2010…2026] → « 1998 à 2000, 2005 et 2010 à 2026 » */
+export function libellePeriode(annees: number[]): string {
+  const morceaux = plages(annees).map(([de, a]) => (de === a ? String(de) : `${de} à ${a}`));
+  if (morceaux.length <= 1) return morceaux[0] ?? "";
+  return `${morceaux.slice(0, -1).join(", ")} et ${morceaux[morceaux.length - 1]}`;
 }
 
 /** Dernier jour réel du bail (départ, sinon fin) ; null = durée indéterminée */
@@ -30,26 +72,14 @@ export function finReelle(b: BailPeriode): string | null {
 }
 
 export function bailDansAnnees(b: BailPeriode, annees: number[]): boolean {
-  const courante = new Date().getFullYear();
-  if (b.statut === "a_venir" && annees.includes(courante)) return true;
+  if (b.statut === "a_venir" && annees.includes(anneeCourante())) return true;
   const fin = finReelle(b) ?? "9999-12-31";
   return annees.some((a) => b.date_debut <= `${a}-12-31` && fin >= `${a}-01-01`);
 }
 
-/** Années consécutives regroupées : [2026, 2025, 2024] → « 2024 à 2026 » ; [2026, 2023] → « 2023 et 2026 » */
-export function libellePeriode(annees: number[]): string {
-  const t = [...annees].sort((x, y) => x - y);
-  if (t.length === 1) return String(t[0]);
-  const suivies = t.every((a, i) => i === 0 || a === t[i - 1] + 1);
-  if (suivies) return `${t[0]} à ${t[t.length - 1]}`;
-  return `${t.slice(0, -1).join(", ")} et ${t[t.length - 1]}`;
-}
-
-/** Pour un nom de fichier : « 2024-2026 » ou « 2023_2026 » */
+/** Pour un nom de fichier : « 2024-2026 » ou « 1998-2000_2010 » */
 export function periodeFichier(annees: number[]): string {
-  const t = [...annees].sort((x, y) => x - y);
-  const suivies = t.every((a, i) => i === 0 || a === t[i - 1] + 1);
-  return t.length === 1 ? String(t[0]) : suivies ? `${t[0]}-${t[t.length - 1]}` : t.join("_");
+  return plages(annees).map(([de, a]) => (de === a ? String(de) : `${de}-${a}`)).join("_");
 }
 
 /** Le mois (AAAA-MM-01) fait-il partie d'une année choisie ? */

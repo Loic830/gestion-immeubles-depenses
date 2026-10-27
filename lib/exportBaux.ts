@@ -10,6 +10,7 @@
 // Même principe que le dossier comptable : décompresser avant d'ouvrir le fichier Excel.
 
 import { supabase, BUCKET_RECUS } from "./supabase";
+import { parLots, toutesLesLignes } from "./paquets";
 import { triNumero } from "./dates";
 import { bailDansAnnees, chaineDe, libellePeriode, moisDansAnnees, periodeFichier, LIBELLE_ORIGINE, type OrigineBail } from "./baux";
 
@@ -57,19 +58,25 @@ export async function exporterDossierPreteur(
   const anneesTriees = [...annees].sort((x, y) => x - y);
 
   // 1. Données de l'immeuble : tous les baux qui touchent la période
-  const [lo, ba] = await Promise.all([
+  //    (v0.9.11 : lus par paquets, une période de 30 ans dépasse la limite de 1000 lignes)
+  const [lo, tous] = await Promise.all([
     supabase.from("logements").select("id, numero").eq("immeuble_id", immeuble.id).is("deleted_at", null).eq("actif", true),
-    supabase.from("v_baux")
+    toutesLesLignes<Bail>((debut, fin) => supabase.from("v_baux")
       .select("id, logement_id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, mode_paiement, inclusions, locataires, bail_precedent_id, origine")
       .eq("immeuble_id", immeuble.id)
-      .order("date_debut"),
+      .order("date_debut").order("id")
+      .range(debut, fin)),
   ]);
   if (lo.error) throw new Error(lo.error.message);
-  if (ba.error) throw new Error(ba.error.message);
   const logements = ((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero));
-  const tous = (ba.data ?? []) as Bail[];
   const baux = tous.filter((b) => bailDansAnnees(b, annees));
   const bauxDe = (logementId: string) => baux.filter((b) => b.logement_id === logementId);
+  // Loyers avec subvention de l'OMH (v0.9.12, migration 022 ; sans elle, aucune)
+  const omh = new Map<string, number>();
+  {
+    const { data } = await supabase.from("baux").select("id, part_omh_cents").not("part_omh_cents", "is", null);
+    for (const x of (data ?? []) as { id: string; part_omh_cents: number }[]) omh.set(x.id, x.part_omh_cents);
+  }
 
   const bailIds = baux.filter((b) => logements.some((l) => l.id === b.logement_id)).map((b) => b.id);
   // Chaîne de chaque bail : bail d'origine → renouvellements → cession (v0.9.5)
@@ -79,21 +86,25 @@ export async function exporterDossierPreteur(
   const docs: Doc[] = [];
   const mois: Mois[] = [];
   if (bailIds.length) {
+    const premiere = Math.min(...annees);
+    const derniere = Math.max(...annees);
     const [d, m] = await Promise.all([
-      supabase.from("documents")
+      parLots<Doc>(idsCopies, (lot, debut, fin) => supabase.from("documents")
         .select("bail_id, storage_key, mime_type, created_at")
-        .in("bail_id", idsCopies)
+        .in("bail_id", lot)
         .eq("type", "bail")
         .is("deleted_at", null)
-        .order("created_at"),
-      supabase.from("v_soldes")
+        .order("created_at").order("storage_key")
+        .range(debut, fin)),
+      parLots<Mois>(bailIds, (lot, debut, fin) => supabase.from("v_soldes")
         .select("bail_id, mois, montant_du_cents, recu_cents")
-        .in("bail_id", bailIds),
+        .in("bail_id", lot)
+        .gte("mois", `${premiere}-01-01`).lte("mois", `${derniere}-12-01`)
+        .order("bail_id").order("mois")
+        .range(debut, fin)),
     ]);
-    if (d.error) throw new Error(d.error.message);
-    if (m.error) throw new Error(m.error.message);
-    docs.push(...((d.data ?? []) as Doc[]));
-    mois.push(...((m.data ?? []) as Mois[]).filter((x) => moisDansAnnees(x.mois, annees)));
+    docs.push(...d.sort((x, y) => x.created_at.localeCompare(y.created_at)));
+    mois.push(...m.filter((x) => moisDansAnnees(x.mois, annees)));
   }
 
   // 2. Copies des baux
@@ -192,7 +203,8 @@ export async function exporterDossierPreteur(
     for (const b of liste) {
       const r = feuille.getRow(rangee++);
       r.getCell(1).value = l.numero;
-      r.getCell(2).value = b.locataires ?? "";
+      r.getCell(2).value = (b.locataires ?? "") +
+        (omh.has(b.id) ? ` (supplément au loyer OMH : ${(omh.get(b.id)! / 100).toLocaleString("fr-CA", { minimumFractionDigits: 2 })} $/mois)` : "");
       r.getCell(3).value = STATUTS[b.statut] ?? b.statut;
       r.getCell(4).value = LIBELLE_ORIGINE[b.origine] ?? "";
       r.getCell(5).value = versDate(b.date_debut);

@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **25 octobre 2026**, version **0.9.9.1**.
+> ou par une nouvelle conversation avec Claude. État au **26 octobre 2026**, version **0.9.14**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -24,7 +24,7 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 
 **Ce que l'app fait aujourd'hui** : en-tête « Immeubles So-Max » (cloche, avatar → Profil et Actifs) et
 5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicules.
-1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; toucher un paiement ouvre son détail pour le modifier ou l'annuler (v0.9.7) ; encadré des dépôts faits du mois (toucher = par immeuble, v0.9.4) et boutons « Appeler » / « Texter » pour les retards (v0.9.2).
+1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; toucher un paiement ouvre son détail pour le modifier ou l'annuler (v0.9.7) ; un dépôt peut payer plusieurs mois (v0.9.10) ; encadré des dépôts faits du mois (toucher = par immeuble, v0.9.4) et boutons « Appeler » / « Texter » pour les retards (v0.9.2) ; loyer avec subvention de l'OMH : deux parts par mois, du locataire et de l'OMH (v0.9.12).
 2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8) ; choix d'un ou plusieurs immeubles (puces « Tous » + chaque immeuble, v0.9.1) ; anneau par catégorie et barres en mode Mois et Année (v0.9.2), cachés par défaut : toucher le montant du haut les affiche (v0.9.4). Les exports sont dans Profil > Rapport d'impôts (v0.9.0).
 3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2) ; filtres par logement (immeuble choisi) et par état des baux, « Renouveler le bail », « Modifier le prix du loyer » (v0.9.3) ; nouveau bail : question sur les mois passés, alerte sans photo du bail, photos de l'enquête de crédit et des règlements d'immeuble (aussi sur la fiche) (v0.9.4) ; **cession de bail** sur la fiche, type de bail (nouveau, renouvellement, cession) et dossier prêteur qui joint toute la chaîne des copies : bail d'origine, renouvellements, cession (v0.9.5) ; « Renouveler le bail » aussi sur un bail terminé (historique, dates passées, mois passés payés) et « C'est un renouvellement de ce bail » pour raccorder le bail suivant (v0.9.6) ; « Loyers dus » : toucher un mois ouvre ses paiements, toucher un paiement ouvre son détail à modifier ou annuler (v0.9.7) ; fin du bail toujours au dernier jour du mois, choisie par mois et année (v0.9.8) ; « Cession de bail » aussi sur un bail terminé (historique, date passée, mois passés payés) (v0.9.9).
 4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
@@ -94,16 +94,21 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 018 | `018_cession_bail.sql` | `baux.origine` (nouveau / renouvellement / cession ; anciens renouvellements reconnus par leur note) ; `v_baux` redéfinie (colonnes explicites + `origine` à la fin) ; `renouveler_bail` redéfinie (copie de 016 + origine) ; RPC `ceder_bail(bail, date, locataires)` (terminer_bail la veille + creer_bail, mêmes loyer/fin/extras, hausses prévues reportées) (v0.9.5) | **à exécuter** |
 | 019 | `019_renouveler_bail_termine.sql` | `renouveler_bail` redéfinie avec `p_mois_payes jsonb default '[]'` (l'ancienne à 4 arguments est supprimée ; refus si un bail suit déjà) ; RPC `lier_renouvellement(bail, suivant)` (pose `bail_precedent_id`, origine renouvellement, réponse acceptée) (v0.9.6) | **à exécuter** |
 | 020 | `020_ceder_bail_termine.sql` | `ceder_bail` redéfinie avec `p_mois_payes jsonb default '[]'` (l'ancienne à 3 arguments est supprimée) ; dates passées permises ; paiements automatiques « Marqué payé à la création du bail » de l'ancien bail après la cession retirés (suppression douce) ; refus si un bail suit déjà (v0.9.9) | **à exécuter** |
+| 021 | `021_depot_plusieurs_mois.sql` | `paiements.depot_id` ; RPC `repartir_depot(p)` (remplace les paiements non-crédit des mois choisis par un dépôt réparti, le plus ancien d'abord, le dernier mois prend le reste ; `paiement_id` = paiement corrigé, tout son ancien dépôt est remplacé) ; RPC `annuler_depot(depot)` (v0.9.10) | **à exécuter** |
+| 022 | `022_subvention_omh.sql` | Loyer avec subvention de l'OMH : `baux.part_omh_cents`, `echeances.omh_cents` (déclencheur `trg_echeances_omh` : copiée du bail à la création de chaque mois), `paiements.payeur` (`locataire` / `omh`), mode `depot_direct` ; `v_soldes` + `omh_cents`, `recu_omh_cents`, `solde_locataire_cents`, `solde_omh_cents` (retard si l'une des parts n'est pas payée) ; `v_baux` + `part_omh_cents` ; `marquer_mois_payes` (un paiement par part), `creer_bail` (`part_omh_cents`) ; `renouveler_bail` et `ceder_bail` + `p_part_omh_cents` (remplacent les versions de 019/020) ; RPC `modifier_bail_omh(p)`, `changer_loyer_omh(…)`, `definir_part_omh(…)` ; `repartir_depot` + `payeur` ; `alertes_du_jour` : alerte « Supplément OMH en retard » (clé `omh:`) séparée de celle du locataire (v0.9.12) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `021_…`.
+| 023 | `023_mois_payes_suivent.sql` | `paiements.auto` (« Marqué payé à la création du bail » jamais modifié à la main ; déclencheur `trg_paiements_auto` le remet à faux lors d'une modification) ; `marquer_mois_payes` (auto = vrai) ; RPC `realigner_mois_payes(bail)` ; `modifier_bail` et `modifier_bail_omh` l'appellent ; correction unique des baux existants (v0.9.13) | **à exécuter** |
+
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `024_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
 - `depenses` (en-tête, `statut` brouillon/complete) → `depense_lignes` (une par immeuble/catégorie ; somme des lignes = total, vérifiée par trigger différé) → `pieces_jointes`.
 - `baux` (contrainte d'exclusion : pas de chevauchement sur un logement ; `date_fin` vide = durée indéterminée ; `date_depart` = départ réel) → `bail_locataires` (un principal) → `bail_extras` (montant positif = extra, **négatif = crédit mensuel**).
 - `echeances` : un loyer dû par bail et par mois (`loyer_cents + extras_cents` = `montant_du_cents`, colonne générée ; total ≥ 0).
-- `paiements` : statut `recu` / `en_main` / `sans_provision` ; mode `interac` / `cheque` / `prelevement` / `comptant` / `credit` (crédit : raison obligatoire dans `notes`).
-- `v_soldes` : dû, reçu, chèques en main, solde, jours de retard par échéance.
+- `paiements` (`depot_id` : parts d'un même dépôt qui paie plusieurs mois, v0.9.10) : statut `recu` / `en_main` / `sans_provision` ; mode `interac` / `cheque` / `prelevement` / `comptant` / `credit` (crédit : raison obligatoire dans `notes`).
+- `v_soldes` : dû, reçu, chèques en main, solde, jours de retard par échéance ; v0.9.12 : part de l'OMH du mois et solde de chaque part (locataire / OMH).
+- Subvention de l'OMH (v0.9.12) : `loyer_cents` = loyer reconnu ; part du locataire = dû du mois − `omh_cents` (extras et crédits mensuels au locataire) ; les crédits ponctuels sont toujours au locataire.
 - Fenêtre d'avis TAL (C.c.Q. art. 1942) : bail de 12 mois ou plus → 6 à 3 mois avant la fin ; moins de 12 mois → 2 à 1 mois avant.
 
 **Tester le SQL sans toucher à la vraie base** : une copie locale PostgreSQL 16 avec un fichier de remplacement
@@ -124,7 +129,7 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `app/depense/[id]/page.tsx` | détail d'une dépense | `DetailDepense` |
 | `app/depense/[id]/modifier/page.tsx` | modifier / compléter | `ModifierDepense` |
 | `app/loyers/page.tsx` | onglet **Loyers** | `PageLoyers` |
-| `app/baux/page.tsx` | onglet **Baux** (liste) | `PageBaux` |
+| `app/baux/page.tsx` | onglet **Baux** (liste) ; bouton « Période » (v0.9.11) | `PageBaux` |
 | `app/baux/nouveau/page.tsx` | nouveau bail | `PageNouveauBail` |
 | `app/baux/[id]/page.tsx` | fiche du bail ; « Cession de bail », type et lien vers le bail précédent (v0.9.5) ; renouveler un bail terminé, mois passés payés, « C'est un renouvellement de ce bail » (v0.9.6) ; mois des « Loyers dus » touchables (v0.9.7) | `DetailBail` |
 | `app/baux/[id]/modifier/page.tsx` | modifier le bail (v0.8.7) ; type de bail si le bail suit un autre bail (v0.9.5) | `ModifierBail` |
@@ -146,6 +151,10 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `components/TiroirNotifications.tsx`, `PreferencesNotifications.tsx`, `ActivationPush.tsx` | tiroir de la cloche, préférences, « Sur ce téléphone » (v0.8.9) |
 | `lib/notifications.ts` | **catalogue des notifications** (code, nom, moment, portée immeuble / véhicule, exemple) + lecture et comptage |
 | `lib/push.ts` | Web Push côté téléphone (service worker, permission, abonnement) |
+| `components/ChoixAnnees.tsx` | feuille « Période » de l'onglet Baux (choix rapides, De … à …, grille des années, v0.9.11) |
+| `lib/omh.ts` | loyer avec subvention de l'OMH : part de l'OMH d'un bail, vérification de la migration 022, message d'erreur (v0.9.12) |
+| `lib/exportLoyers.ts` | Rapport d'impôts : revenus de loyers loyers_AAAA.xlsx (par immeuble, par mois ; locataire, OMH, crédits) (v0.9.12) |
+| `lib/paquets.ts` | lectures par paquets de 1000 lignes / lots de 100 identifiants (30 ans de baux, v0.9.11) |
 | `app/api/notifications/envoyer/route.ts` | seule route serveur : GET = Vercel Cron (calcul + envoi à tous), POST = envoi des tests de la personne connectée |
 | `public/sw.js` | service worker : affiche la notification ; la toucher ouvre `/` sans la marquer lue |
 | `components/FeuillePret.tsx`, `FeuilleReleve.tsx`, `FeuilleAssurance.tsx`, `FeuilleTaxes.tsx`, `FeuillePaiement.tsx` | feuilles (formulaires du bas) de la page Frais fixes |
@@ -256,6 +265,45 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.14, remplace 0.9.13)**
+- Décompresser le ZIP 0.9.14 (il contient aussi tout 0.9.13), exécuter `023_mois_payes_suivent.sql` (ou la relancer si
+  0.9.13 était déjà en place : le déclencheur `trg_paiements_auto` a changé). Maxime (26 oct.) : « le chiffre que j'inscris,
+  c'est réellement le dépôt dans le compte » → un paiement enregistré à la main n'est jamais réaligné, et l'historique des
+  loyers dus montre le montant déposé. Le -112 $ du 682 est un crédit « pelouse » non mérité : à retirer via Modifier le bail.
+
+**À faire par Loïc (v0.9.13)**
+- Exécuter `023_mois_payes_suivent.sql` (après 022). Décompresser, `npm run build`, pousser. Signalé par Maxime le 26 oct. :
+  Robert-Jean 682 (Jessy Tremblay), dû 995 $ (loyer 1 107 $, extras -112 $) mais « Marqué payé » à 1 107 $ chaque mois.
+  Cause : `modifier_bail` recalculait le dû sans toucher les paiements automatiques. La migration corrige les baux existants.
+
+**À faire par Loïc (v0.9.12)**
+- Exécuter `022_subvention_omh.sql` (après 021). Décompresser, `npm run build`, pousser. Demande de Maxime du 25 oct. : 3 logements
+  avec le supplément au loyer de l'OMH (ex. loyer reconnu 638 $ = locataire 450 $ + OMH 188 $). Ensuite, pour chacun de ces
+  3 baux : « Modifier le bail » > cocher « Loyer avec subvention de l'OMH » > entrer les deux parts. Les paiements déjà
+  inscrits restent au nom du locataire : si un paiement passé venait de l'OMH, l'ouvrir et choisir « Payé par : OMH ».
+
+**Choix faits en 0.9.12** : le loyer du bail reste le loyer reconnu (total) ; on saisit la part du locataire et la part de
+l'OMH, le loyer = la somme. La part de l'OMH est gardée par mois (`echeances.omh_cents`) car l'OMH la recalcule (souvent
+chaque année, au renouvellement) ; « Modifier le prix du loyer » change le loyer et/ou la part de l'OMH à partir d'un mois.
+Cession : la subvention n'est pas copiée (elle suit le ménage). Retards : on ne texte jamais le locataire pour la part de
+l'OMH. Revenus : la part de l'OMH compte dans les loyers bruts (Rapport d'impôts > Revenus de loyers).
+
+**À faire par Loïc (v0.9.11)**
+- Rien à exécuter dans Supabase. Décompresser, `npm run build`, pousser. Demande de Maxime du 25 oct. : des baux de 10 à 30 ans,
+  trop d'années en puces. La « Période » de l'onglet Baux est maintenant un bouton qui ouvre une feuille (choix rapides, De … à …,
+  grille des années avec « Tout sélectionner ») ; les années remontent jusqu'au plus vieux bail. Lectures par paquets (limite de
+  1000 lignes de Supabase) pour la liste, le dossier prêteur et l'historique d'un logement.
+
+**À faire par Loïc (v0.9.10)**
+- Exécuter `021_depot_plusieurs_mois.sql`. Sans elle, « Enregistrer le dépôt » affiche « La mise à jour de la base (021) n'est pas encore faite ».
+
+**Choix faits en 0.9.10** (retour de Maxime du 25 oct. : un paiement de septembre changé à 2 589 $ pour un dépôt qui payait
+3 mois ; la fiche affichait « 4 315 $ reçus sur 2 589 $ » car juillet et août étaient déjà payés). Un dépôt est réparti mois
+par mois (le plus ancien d'abord ; le dernier mois prend le reste, donc un trop-payé reste visible). Les paiements déjà inscrits sur
+les mois choisis sont remplacés (suppression douce), les crédits restent. Les « dépôts faits » de l'onglet Loyers restent rattachés
+au mois du loyer (pas à la date du dépôt). Avertissement quand un montant dépasse ce qui reste dû du mois, avec le lien pour
+répartir. Annuler une part d'un dépôt annule tout le dépôt.
 
 **À faire par Loïc (v0.9.9.1, correctif)**
 - Rien à exécuter dans Supabase. Décompresser, `npm run build`, pousser. Demande de Maxime du 25 oct. : sur le bail de Simon Beson

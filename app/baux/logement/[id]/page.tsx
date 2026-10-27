@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { parLots } from "@/lib/paquets";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { dateLisible } from "@/lib/dates";
@@ -51,8 +52,11 @@ export default function HistoriqueLogement() {
       const liste = (ba.data ?? []) as Bail[];
       setBaux(liste);
       if (liste.length) {
-        const { data } = await supabase.from("v_soldes").select("bail_id, montant_du_cents, recu_cents").in("bail_id", liste.map((b) => b.id));
-        setMois((data ?? []) as Mois[]);
+        // Par lots et par paquets (v0.9.11) : 30 ans de baux dépassent la limite de 1000 lignes
+        const data = await parLots<Mois>(liste.map((b) => b.id), (lot, debut, fin) => supabase.from("v_soldes")
+          .select("bail_id, montant_du_cents, recu_cents").in("bail_id", lot).order("bail_id").order("mois").range(debut, fin))
+          .catch(() => [] as Mois[]);
+        setMois(data);
       }
       setChargement(false);
     })();

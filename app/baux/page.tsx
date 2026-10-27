@@ -7,9 +7,11 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, dateLisible, triNumero } from "@/lib/dates";
-import { ETATS, anneesProposees, bailDansAnnees, etatsBail, libellePeriode, lireAnnees, lireEtats, type EtatBail } from "@/lib/baux";
+import { ETATS, anneeCourante as courante, anneesDisponibles, bailDansAnnees, ecrireAnnees, etatsBail, libellePeriode, lireAnnees, lireEtats, type EtatBail } from "@/lib/baux";
 import BarreOnglets from "@/components/BarreOnglets";
+import ChoixAnnees from "@/components/ChoixAnnees";
 import { exporterDossierPreteur } from "@/lib/exportBaux";
+import { toutesLesLignes } from "@/lib/paquets";
 import { Anneau, Barres, MOIS_COURTS, couleur } from "@/components/Graphiques";
 
 type DuMois = { mois: string; immeuble_id: string; montant_du_cents: number };
@@ -58,12 +60,14 @@ function Baux() {
   const [parImmeuble, setParImmeuble] = useState(false);
   const [dusAnnee, setDusAnnee] = useState<DuMois[]>([]);
 
-  // Filtres gardés dans l'adresse : ?a=2026,2025 (années) & i=<immeuble> & l=<logement>,<logement> & e=actif,termine (états)
-  const annees = lireAnnees(params.get("a"));
+  // Filtres gardés dans l'adresse : ?a=tout | 2016-2026 | 2026,2023 (années) & i=<immeuble> & l=<logement>,<logement> & e=actif,termine (états)
+  // Années proposées : de l'année du plus vieux bail à l'année courante (v0.9.11)
+  const disponibles = anneesDisponibles(baux);
+  const annees = lireAnnees(params.get("a"), disponibles);
   const immeubleFiltre = params.get("i") ?? "";
   const logementsFiltre = immeubleFiltre ? (params.get("l") ?? "").split(",").filter(Boolean) : [];
   const etatsFiltre = lireEtats(params.get("e"));
-  const anneeCourante = anneesProposees()[0];
+  const anneeCourante = courante();
   const periode = libellePeriode(annees);
   // Graphique des loyers par mois : la plus récente des années choisies
   const anneeGraphique = annees[0];
@@ -75,18 +79,12 @@ function Baux() {
     const lo = f.logements ?? (immeuble === immeubleFiltre ? logementsFiltre : []);
     const etats = f.etats ?? etatsFiltre;
     const q = new URLSearchParams();
-    const t = [...nouvellesAnnees].sort((x, y) => y - x);
-    if (!(t.length === 1 && t[0] === anneeCourante)) q.set("a", t.join(","));
+    const a = ecrireAnnees(nouvellesAnnees, disponibles);
+    if (a) q.set("a", a);
     if (immeuble) q.set("i", immeuble);
     if (immeuble && lo.length) q.set("l", lo.join(","));
     if (etats.length) q.set("e", etats.join(","));
     router.replace(`/baux${q.toString() ? `?${q}` : ""}`, { scroll: false });
-  }
-
-  function basculerAnnee(a: number) {
-    const avec = annees.includes(a) ? annees.filter((x) => x !== a) : [...annees, a];
-    if (avec.length === 0) return; // au moins une année
-    majFiltres({ annees: avec });
   }
 
   function basculerLogement(id: string) {
@@ -120,18 +118,21 @@ function Baux() {
     (async () => {
       // Les baux à durée indéterminée reçoivent leurs prochains loyers dus (sans effet si déjà fait)
       await supabase.rpc("prolonger_echeances");
+      // Baux lus par paquets de 1000 (30 ans d'historique peut dépasser la limite de Supabase, v0.9.11)
       const [im, lo, ba] = await Promise.all([
         supabase.from("immeubles").select("id, nom, adresse").is("deleted_at", null).order("nom"),
         supabase.from("logements").select("id, immeuble_id, numero").is("deleted_at", null).eq("actif", true),
-        supabase.from("v_baux")
+        toutesLesLignes<Bail>((debut, fin) => supabase.from("v_baux")
           .select("id, logement_id, statut, date_debut, date_fin, date_depart, loyer_cents, extras_cents, locataires, avis_du, avis_au, date_avis_envoye")
-          .order("date_debut", { ascending: false }),
+          .order("date_debut", { ascending: false }).order("id")
+          .range(debut, fin))
+          .then((data) => ({ data, error: null }), (e: Error) => ({ data: [] as Bail[], error: { message: e.message } })),
       ]);
       const err = [im, lo, ba].find((r) => r.error)?.error;
       if (err) setErreur(err.message);
       setImmeubles((im.data ?? []) as Immeuble[]);
       setLogements(((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero)));
-      setBaux((ba.data ?? []) as Bail[]);
+      setBaux(ba.data);
       setChargement(false);
     })();
   }, [session]);
@@ -233,14 +234,11 @@ function Baux() {
       {/* Filtres */}
       <section className="carte">
         <strong>Période</strong>
-        <div className="puces">
-          {anneesProposees().map((a) => (
-            <span key={a} className={`puce${annees.includes(a) ? " actif" : ""}`}>
-              <button type="button" aria-pressed={annees.includes(a)} onClick={() => basculerAnnee(a)}>{a}</button>
-            </span>
-          ))}
-        </div>
-        <p className="aide">Touche une ou plusieurs années. Le dossier prêteur suit la même période.</p>
+        <ChoixAnnees disponibles={disponibles} choisies={annees} onChoisir={(a) => majFiltres({ annees: a })} />
+        <p className="aide">
+          {disponibles.length > 1 ? `Baux de ${disponibles[disponibles.length - 1]} à ${anneeCourante}. ` : ""}
+          Touche pour choisir une ou plusieurs années. Le dossier prêteur suit la même période.
+        </p>
 
         {immeubles.length > 1 && (
           <div className="puces" style={{ marginTop: 12 }}>

@@ -8,6 +8,7 @@ import { DOCUMENTS_BAIL, televerserDocument, type PagesParType } from "@/lib/doc
 import { useSession } from "@/lib/useSession";
 import { prochainPremierJuillet, dateLisible, lendemain } from "@/lib/dates";
 import FormulaireBail, { nouveauLocataire, type BailSaisi } from "@/components/FormulaireBail";
+import { migrationOmhFaite, MESSAGE_MIGRATION_OMH } from "@/lib/omh";
 
 type BailExistant = {
   id: string;
@@ -53,6 +54,8 @@ function NouveauBail() {
     duree: "12" as const,
     dateFinAutre: "",
     loyerSaisi: "",
+    omh: false,
+    partOmhSaisi: "",
     jourEcheance: "1",
     mode: "interac" as const,
     extras: [],
@@ -85,6 +88,8 @@ function NouveauBail() {
 
   async function enregistrer(p: BailSaisi, pages: PagesParType) {
     setEnvoi("Vérification…");
+    // Subvention de l'OMH (v0.9.12) : sans la migration 022, la part de l'OMH serait perdue
+    if (p.part_omh_cents && !(await migrationOmhFaite())) { setEnvoi(null); return setErreur(MESSAGE_MIGRATION_OMH); }
     // Un bail couvre-t-il déjà une partie de la période du nouveau bail ?
     const { data, error: errLecture } = await supabase.from("v_baux")
       .select("id, statut, date_debut, date_fin, date_depart, locataires")

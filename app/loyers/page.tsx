@@ -9,7 +9,7 @@ import { formatCents } from "@/lib/argent";
 import { aujourdhuiIso, moisLisible, triNumero } from "@/lib/dates";
 import BarreOnglets from "@/components/BarreOnglets";
 import { Anneau, couleur } from "@/components/Graphiques";
-import FeuilleLoyer, { lienTexto, numero, type Solde } from "@/components/FeuilleLoyer";
+import FeuilleLoyer, { lienTexto, numero, partOmh, resteARecevoir, soldeLocataire, soldeOmh, type Solde } from "@/components/FeuilleLoyer";
 
 type Logement = { id: string; immeuble_id: string; numero: string };
 type Immeuble = { id: string; nom: string };
@@ -43,6 +43,8 @@ function Loyers() {
   const [retards, setRetards] = useState<Solde[]>([]);
   // Dépôts faits (paiements reçus, sans les crédits ni les chèques en main) par échéance du mois affiché
   const [depots, setDepots] = useState<Map<string, number>>(new Map());
+  // Dont les dépôts de l'OMH (v0.9.12)
+  const [depotsOmh, setDepotsOmh] = useState(0);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -66,17 +68,20 @@ function Loyers() {
     const soldes = (so.data ?? []) as Solde[];
     setSoldesMois(soldes);
     const parEcheance = new Map<string, number>();
+    let omh = 0;
     if (soldes.length) {
       const { data, error } = await supabase.from("paiements")
-        .select("echeance_id, montant_cents")
+        .select("*")   // avec payeur après la migration 022
         .in("echeance_id", soldes.map((x) => x.echeance_id))
         .eq("statut", "recu").neq("mode", "credit").is("deleted_at", null);
       if (error) setErreur(error.message);
-      for (const p of (data ?? []) as { echeance_id: string; montant_cents: number }[]) {
+      for (const p of (data ?? []) as { echeance_id: string; montant_cents: number; payeur?: string }[]) {
         parEcheance.set(p.echeance_id, (parEcheance.get(p.echeance_id) ?? 0) + p.montant_cents);
+        if (p.payeur === "omh") omh += p.montant_cents;
       }
     }
     setDepots(parEcheance);
+    setDepotsOmh(omh);
     setRetards((re.data ?? []) as Solde[]);
     setChargement(false);
   }, [mois]);
@@ -95,8 +100,8 @@ function Loyers() {
     depots: soldesMois.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
     du: soldesMois.reduce((s, x) => s + x.montant_du_cents, 0),
     recu: soldesMois.reduce((s, x) => s + x.recu_cents, 0),
-    retard: retards.reduce((s, x) => s + x.solde_cents, 0),
-    reste: soldesMois.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
+    retard: retards.reduce((s, x) => s + resteARecevoir(x), 0),
+    reste: soldesMois.reduce((s, x) => s + resteARecevoir(x), 0),
   }), [soldesMois, retards, depots]);
   const totauxImmeubles = useMemo(() => immeubles.map((im) => {
     const liste = soldesMois.filter((x) => x.immeuble_id === im.id);
@@ -105,7 +110,7 @@ function Loyers() {
       depots: liste.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
       du: liste.reduce((s, x) => s + x.montant_du_cents, 0),
       recu: liste.reduce((s, x) => s + x.recu_cents, 0),
-      reste: liste.reduce((s, x) => s + Math.max(0, x.solde_cents), 0),
+      reste: liste.reduce((s, x) => s + resteARecevoir(x), 0),
     };
   }), [immeubles, soldesMois, depots]);
 
@@ -137,6 +142,7 @@ function Loyers() {
           <div>
             <div className="chiffre">{formatCents(totaux.depots)}</div>
             <div className="chiffre-libelle">Déposé sur {formatCents(totaux.du)} dus</div>
+            {depotsOmh > 0 && <div className="chiffre-libelle">Dont {formatCents(depotsOmh)} de l&apos;OMH</div>}
             {credits > 0 && <div className="chiffre-libelle">+ {formatCents(credits)} en crédits au locataire</div>}
             {totaux.reste > 0 && <div className="chiffre-libelle">Reste à recevoir : {formatCents(totaux.reste)}</div>}
           </div>
@@ -179,7 +185,21 @@ function Loyers() {
             <strong style={{ color: "var(--erreur)" }}>En retard</strong>
             <strong style={{ color: "var(--erreur)" }}>{formatCents(totaux.retard)}</strong>
           </div>
-          {retards.map((r) => (
+          {/* v0.9.12 : la part de l'OMH en retard a sa propre ligne, sans Appeler ni Texter */}
+          {retards.filter((r) => soldeOmh(r) > 0).map((r) => (
+            <div className="logement-ligne" key={`omh-${r.echeance_id}`}>
+              <span className="logement-numero">{r.logement}</span>
+              <button className="infos lien-ligne" onClick={() => ouvrir(r)}>
+                <div className="titre"><span className="pastille omh" style={{ marginRight: 6 }}>OMH</span>{r.locataires ?? "Locataire"}</div>
+                <div className="sous">Supplément au loyer · {r.immeuble} · <span style={{ textTransform: "capitalize" }}>{moisLisible(r.mois)}</span> · {r.jours_retard} j</div>
+              </button>
+              <div style={{ textAlign: "right" }}>
+                <div className="montant">{formatCents(soldeOmh(r))}</div>
+                <div className="sous ligne-omh" style={{ fontSize: 13 }}>Vérifier avec l&apos;OMH</div>
+              </div>
+            </div>
+          ))}
+          {retards.filter((r) => soldeLocataire(r) > 0).map((r) => (
             <div className="logement-ligne" key={r.echeance_id}>
               <span className="logement-numero">{r.logement}</span>
               <button className="infos lien-ligne" onClick={() => ouvrir(r)}>
@@ -187,7 +207,7 @@ function Loyers() {
                 <div className="sous">{r.immeuble} · <span style={{ textTransform: "capitalize" }}>{moisLisible(r.mois)}</span> · {r.jours_retard} j</div>
               </button>
               <div style={{ textAlign: "right" }}>
-                <div className="montant">{formatCents(r.solde_cents)}</div>
+                <div className="montant">{formatCents(soldeLocataire(r))}</div>
                 {r.telephone ? (
                   <div className="contact-locataire">
                     <a className="lien-tel" href={`tel:${numero(r.telephone)}`}>Appeler</a>
@@ -224,7 +244,8 @@ function Loyers() {
                 }
                 // Départ et arrivée dans le même mois : une ligne par bail
                 return duLogement.map((s) => {
-                const paye = s.solde_cents <= 0;
+                const paye = resteARecevoir(s) <= 0;
+                const omh = partOmh(s) > 0;
                 return (
                   <button className="logement-ligne lien-ligne" key={s.echeance_id} onClick={() => ouvrir(s)}>
                     <span className="logement-numero">{l.numero}</span>
@@ -232,11 +253,14 @@ function Loyers() {
                       <div className="titre">{s.locataires ?? "Locataire"}</div>
                       <div className="sous">
                         {formatCents(s.montant_du_cents)}
-                        {s.recu_cents > 0 && !paye && ` · reçu ${formatCents(s.recu_cents)}`}
+                        {omh && <span className="ligne-omh"> · dont OMH {formatCents(partOmh(s))}</span>}
+                        {s.recu_cents > 0 && (!paye || s.recu_cents !== s.montant_du_cents) && ` · reçu ${formatCents(s.recu_cents)}`}
                       </div>
                     </div>
                     {paye
-                      ? <span className="pastille ok">Payé</span>
+                      ? <span className="pastille ok">{s.solde_cents < 0 ? `Payé (+${formatCents(-s.solde_cents)})` : "Payé"}</span>
+                      : omh && soldeLocataire(s) <= 0
+                        ? <span className="pastille omh">{s.jours_retard > 0 ? "Retard OMH" : "OMH à recevoir"}</span>
                       : s.jours_retard > 0
                         ? <span className="pastille vacant">Retard</span>
                         : s.recu_cents > 0 ? <span className="pastille">Partiel</span>

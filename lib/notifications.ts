@@ -68,7 +68,7 @@ export const CATALOGUE: TypeNotification[] = [
   {
     code: "loyer_retard",
     nom: "Loyer en retard",
-    quand: "quand un loyer n'est pas reçu 5 jours après l'échéance",
+    quand: "quand un loyer (ou la part de l'OMH) n'est pas reçu 5 jours après l'échéance",
     portee: "immeuble",
     exemple: {
       titre: "Loyer en retard · {immeuble} 6",

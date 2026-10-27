@@ -10,6 +10,7 @@ import { DOCUMENTS_BAIL, aucunePage, type PagesParType, type TypeDocumentBail } 
 // Formulaire partagé : Nouveau bail et Modifier le bail.
 // Il valide la saisie et prépare le paramètre « p » des fonctions creer_bail,
 // creer_bail_en_remplacement et modifier_bail (mêmes champs).
+// v0.9.12 : case « Loyer avec subvention de l'OMH » : part du locataire + part de l'OMH = loyer reconnu.
 
 type Immeuble = { id: string; nom: string };
 type Logement = { id: string; immeuble_id: string; numero: string };
@@ -28,6 +29,9 @@ export type ValeursBail = {
   duree: Duree;
   dateFinAutre: string;
   loyerSaisi: string;
+  /** v0.9.12 : loyer avec subvention de l'OMH (supplément au loyer) */
+  omh: boolean;
+  partOmhSaisi: string;
   jourEcheance: string;
   mode: Mode;
   extras: ExtraForm[];
@@ -40,6 +44,8 @@ export type BailSaisi = {
   date_debut: string;
   date_fin: string | null;
   loyer_cents: number;
+  /** v0.9.12 : part de l'OMH chaque mois (null = pas de subvention) */
+  part_omh_cents: number | null;
   jour_echeance: number;
   mode_paiement: Mode;
   inclusions: string | null;
@@ -102,6 +108,14 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
   const [duree, setDuree] = useState<Duree>(initial.duree);
   const [dateFinAutre, setDateFinAutre] = useState(initial.dateFinAutre);
   const [loyerSaisi, setLoyerSaisi] = useState(initial.loyerSaisi);
+  // Subvention de l'OMH : on saisit la part du locataire et la part de l'OMH ; le loyer = la somme
+  const [omh, setOmh] = useState(initial.omh);
+  const [partOmhSaisi, setPartOmhSaisi] = useState(initial.partOmhSaisi);
+  const [partLocSaisi, setPartLocSaisi] = useState(() => {
+    const l = versCents(initial.loyerSaisi);
+    const o = versCents(initial.partOmhSaisi);
+    return initial.omh && l !== null ? centsVersSaisie(l - (o ?? 0)) : "";
+  });
   const [jourEcheance, setJourEcheance] = useState(initial.jourEcheance);
   const [mode, setMode] = useState<Mode>(initial.mode);
   const [extras, setExtras] = useState<ExtraForm[]>(initial.extras);
@@ -146,8 +160,11 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
   // « Autre » (v0.9.8) : on choisit le mois et l'année, la fin tombe le dernier jour du mois
   const anneeDebut = Number(dateDebut.slice(0, 4)) || new Date().getFullYear();
   const anneeFin = Number(dateFinAutre.slice(0, 4)) || anneeDebut;
-  const anneesFin = Array.from({ length: 11 }, (_, i) => Math.min(anneeDebut, anneeFin) + i);
-  if (!anneesFin.includes(anneeFin)) anneesFin.push(anneeFin);
+  // v0.9.11 : de l'année du début (ou 40 ans en arrière si le début n'est pas choisi) à 10 ans plus tard
+  const anneeAuj = new Date().getFullYear();
+  const premiereFin = Math.min(dateDebut ? anneeDebut : anneeAuj - 40, anneeFin);
+  const derniereFin = Math.max(anneeDebut + 10, anneeAuj + 10, anneeFin);
+  const anneesFin = Array.from({ length: derniereFin - premiereFin + 1 }, (_, i) => premiereFin + i);
   function choisirFin(annee: number, mois: number) {
     setDateFinAutre(finDuMois(`${annee}-${String(mois).padStart(2, "0")}-01`));
   }
@@ -156,11 +173,33 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
     if (d === "autre" && !dateFinAutre && dateDebut) setDateFinAutre(finBail(dateDebut, 12));
     setDuree(d);
   }
-  const loyerCents = versCents(loyerSaisi);
+  const partOmhCents = omh ? versCents(partOmhSaisi) : null;
+  const partLocCents = omh ? versCents(partLocSaisi) : null;
+  const loyerCents = omh
+    ? (partLocCents !== null && partOmhCents !== null ? partLocCents + partOmhCents : null)
+    : versCents(loyerSaisi);
+  function choisirOmh(oui: boolean) {
+    if (oui && !partLocSaisi && !partOmhSaisi) setPartLocSaisi(loyerSaisi);       // le loyer saisi devient la part du locataire
+    if (!oui && loyerCents !== null) setLoyerSaisi(centsVersSaisie(loyerCents));  // on garde le loyer reconnu
+    setOmh(oui);
+  }
   const signe = (e: ExtraForm) => (e.credit ? -1 : 1);
   const extrasCents = extras.reduce((s, e) => s + signe(e) * (versCents(e.montantSaisi) ?? 0), 0);
   const moisPasses = nouveau ? moisEchus(dateDebut, dateFin || null, Number(jourEcheance) || 1) : [];
   const moisAPayer = moisPayes ? moisPasses.filter((m) => !moisExclus.includes(m)) : [];
+  const anneesPassees = Array.from(new Set(moisPasses.map((m) => m.slice(0, 4))));
+  function puceMois(m: string) {
+    const exclu = moisExclus.includes(m);
+    return (
+      <span key={m} className={`puce${exclu ? "" : " actif"}`}>
+        <button type="button" aria-pressed={!exclu}
+                style={exclu ? { textDecoration: "line-through", color: "var(--discret)" } : undefined}
+                onClick={() => setMoisExclus((a) => (exclu ? a.filter((x) => x !== m) : [...a, m]))}>
+          {moisLisible(m)}
+        </button>
+      </span>
+    );
+  }
 
   async function ajouterPages(type: TypeDocumentBail, liste: FileList | null) {
     if (!liste || liste.length === 0) return;
@@ -199,6 +238,8 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
     if (!dateDebut) return setErreur("Entre la date de début.");
     if (duree === "autre" && !dateFinAutre) return setErreur("Entre la date de fin.");
     if (dateFin && dateFin < dateDebut) return setErreur("La date de fin est avant la date de début.");
+    if (omh && partLocCents === null) return setErreur("Entre la part du locataire (ex. 450,00).");
+    if (omh && (partOmhCents === null || partOmhCents <= 0)) return setErreur("Entre la part de l'OMH (ex. 188,00).");
     if (loyerCents === null) return setErreur("Entre le loyer mensuel (ex. 950,00).");
     const locs = locataires.filter((l) => l.existantId || l.prenom.trim() || l.nom.trim());
     if (locs.length === 0) return setErreur("Ajoute au moins un locataire.");
@@ -214,6 +255,7 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
       date_debut: dateDebut,
       date_fin: dateFin || null,
       loyer_cents: loyerCents,
+      part_omh_cents: omh ? partOmhCents : null,
       jour_echeance: Number(jourEcheance) || 1,
       mode_paiement: mode,
       inclusions: inclusions || null,
@@ -353,20 +395,23 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
           {moisPayes && (
             <>
               <p className="aide">Sauf : touche un mois pour l&apos;exclure (il restera à payer dans Loyers).</p>
-              <div className="puces">
-                {moisPasses.map((m) => {
-                  const exclu = moisExclus.includes(m);
+              {moisPasses.length <= 24 ? (
+                <div className="puces">{moisPasses.map(puceMois)}</div>
+              ) : (
+                // Vieux bail (v0.9.11) : les mois sont rangés par année, touche une année pour l'ouvrir
+                anneesPassees.map((an) => {
+                  const ses = moisPasses.filter((m) => m.startsWith(`${an}-`));
+                  const exclus = ses.filter((m) => moisExclus.includes(m)).length;
                   return (
-                    <span key={m} className={`puce${exclu ? "" : " actif"}`}>
-                      <button type="button" aria-pressed={!exclu}
-                              style={exclu ? { textDecoration: "line-through", color: "var(--discret)" } : undefined}
-                              onClick={() => setMoisExclus((a) => (exclu ? a.filter((x) => x !== m) : [...a, m]))}>
-                        {moisLisible(m)}
-                      </button>
-                    </span>
+                    <details key={an} className="annee-mois">
+                      <summary>
+                        {an}<span className="aide">{exclus ? `${ses.length - exclus} payés sur ${ses.length}` : `${ses.length} mois payés`}</span>
+                      </summary>
+                      <div className="puces" style={{ marginTop: 0 }}>{ses.map(puceMois)}</div>
+                    </details>
                   );
-                })}
-              </div>
+                })
+              )}
               <p className="aide">
                 <strong>{moisAPayer.length} mois sur {moisPasses.length}</strong> seront marqués payés dans Loyers
                 {loyerCents !== null && moisAPayer.length > 0 && <> ({formatCents((loyerCents + extrasCents) * moisAPayer.length)})</>}.
@@ -386,7 +431,7 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
               Bail du {dateLisible(dernierBail.date_debut)}{dernierBail.date_fin ? ` au ${dateLisible(dernierBail.date_fin)}` : ""}
               {dernierBail.locataires ? ` · ${dernierBail.locataires}` : ""}
             </span>
-            {!loyerSaisi && (
+            {!loyerSaisi && !omh && (
               <button type="button" className="lien-filtres" style={{ marginTop: 4 }}
                       onClick={() => setLoyerSaisi(centsVersSaisie(dernierBail.loyer_cents))}>
                 Reprendre ce prix
@@ -395,9 +440,39 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
           </div>
         )}
         {nouveau && logementId && !dernierBail && <p className="aide" style={{ marginTop: 0 }}>Aucun bail précédent pour ce logement.</p>}
-        <label htmlFor="loyer">{titreLoyer ?? "Loyer mensuel"}</label>
-        <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
-        {aideLoyer && <p className="aide">{aideLoyer}</p>}
+        <label className="case" style={nouveau && logementId ? undefined : { marginTop: 0 }}>
+          <input type="checkbox" checked={omh} onChange={(e) => choisirOmh(e.target.checked)} />
+          <span>Loyer avec subvention de l&apos;OMH</span>
+        </label>
+        {omh ? (
+          <>
+            <p className="aide" style={{ marginTop: 0 }}>
+              Supplément au loyer : le locataire paie sa part et l&apos;OMH paie le reste. Deux paiements à recevoir chaque mois.
+            </p>
+            <div className="rangee">
+              <div>
+                <label htmlFor="part-locataire">Part du locataire</label>
+                <input id="part-locataire" className="montant-total" inputMode="decimal" placeholder="ex. 450,00" value={partLocSaisi}
+                       onChange={(e) => setPartLocSaisi(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="part-omh">Part de l&apos;OMH</label>
+                <input id="part-omh" className="montant-total" inputMode="decimal" placeholder="ex. 188,00" value={partOmhSaisi}
+                       onChange={(e) => setPartOmhSaisi(e.target.value)} />
+              </div>
+            </div>
+            <p className="aide">
+              {titreLoyer ?? "Loyer mensuel"} (loyer reconnu) : <strong>{loyerCents !== null ? formatCents(loyerCents) : "—"}</strong>
+              {aideLoyer ? <><br />{aideLoyer}</> : null}
+            </p>
+          </>
+        ) : (
+          <>
+            <label htmlFor="loyer">{titreLoyer ?? "Loyer mensuel"}</label>
+            <input id="loyer" className="montant-total" inputMode="decimal" placeholder="0,00" value={loyerSaisi} onChange={(e) => setLoyerSaisi(e.target.value)} />
+            {aideLoyer && <p className="aide">{aideLoyer}</p>}
+          </>
+        )}
 
         <label>Extras et crédits chaque mois</label>
         {extras.map((e) => (
@@ -424,7 +499,12 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
           − Ajouter un crédit (ex. tonte de pelouse)
         </button>
         {loyerCents !== null && (
-          <p className="aide"><strong>Total dû chaque mois : {formatCents(loyerCents + extrasCents)}</strong></p>
+          <p className="aide">
+            <strong>Total dû chaque mois : {formatCents(loyerCents + extrasCents)}</strong>
+            {omh && partOmhCents !== null && (
+              <> : {formatCents(loyerCents + extrasCents - partOmhCents)} du locataire{extrasCents !== 0 ? " (avec les extras et crédits)" : ""} et {formatCents(partOmhCents)} de l&apos;OMH</>
+            )}
+          </p>
         )}
 
         <label>Mode de paiement</label>
@@ -469,7 +549,9 @@ export default function FormulaireBail({ initial, titreLoyer, aideLoyer, avecPho
                 <strong id="titre-question" style={{ fontSize: 19 }}>Il y a des mois passés dans ce bail</strong>
                 <p>Voulez-vous les marquer comme payés ?</p>
                 <p className="aide">
-                  {moisPasses.length} mois : {moisPasses.map((m) => moisLisible(m)).join(", ")}.
+                  {moisPasses.length} mois : {moisPasses.length > 24
+                    ? `de ${moisLisible(moisPasses[0])} à ${moisLisible(moisPasses[moisPasses.length - 1])}`
+                    : moisPasses.map((m) => moisLisible(m)).join(", ")}.
                   {" "}Si vous répondez Non, ils resteront à payer dans Loyers.
                 </p>
                 <div className="rangee" style={{ marginTop: 12 }}>

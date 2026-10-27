@@ -7,7 +7,8 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import { DOCUMENTS_BAIL } from "@/lib/documents";
 import DocumentsBail from "@/components/DocumentsBail";
-import FeuilleLoyer from "@/components/FeuilleLoyer";
+import FeuilleLoyer, { partOmh, resteARecevoir, soldeLocataire, soldeOmh } from "@/components/FeuilleLoyer";
+import { messageOmh } from "@/lib/omh";
 import { nouveauLocataire, type LocataireForm } from "@/components/FormulaireBail";
 import { LIBELLE_ORIGINE, TITRE_COPIE, type OrigineBail } from "@/lib/baux";
 import { formatCents, versCents, centsVersSaisie } from "@/lib/argent";
@@ -34,14 +35,20 @@ type Bail = {
   reponse: string | null;
   origine: OrigineBail;
   bail_precedent_id: string | null;
+  part_omh_cents?: number | null;   // v0.9.12 (migration 022)
 };
 type Locataire = { principal: boolean; locataire: { prenom: string; nom: string; telephone: string | null; courriel: string | null } };
 type Extra = { id: string; libelle: string; montant_cents: number };
-type Solde = { echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number };
+type Solde = {
+  echeance_id: string; mois: string; loyer_cents: number; montant_du_cents: number; recu_cents: number; en_main_cents: number; solde_cents: number; jours_retard: number;
+  omh_cents?: number; solde_locataire_cents?: number; solde_omh_cents?: number;   // v0.9.12
+};
 type Changement = { id: string; date_effet: string; ancien_loyer_cents: number; nouveau_loyer_cents: number; raison: string | null; created_at: string };
 type FinBail = { date_depart: string; forfait_cents: number; raison: string | null };
 type AutreBail = { id: string; statut: "a_venir" | "actif" | "termine"; date_debut: string; date_fin: string | null; date_depart: string | null; locataires: string | null; origine: OrigineBail; bail_precedent_id: string | null };
 type Credit = { id: string; echeance_id: string; montant_cents: number; notes: string | null };
+/** Part d'un dépôt qui paie plusieurs mois (v0.9.10) */
+type PartDepot = { echeance_id: string; montant_cents: number; depot_id: string };
 
 const LIBELLE_MODE = { interac: "Virement Interac", cheque: "Chèques postdatés", prelevement: "Prélèvement automatique", comptant: "Comptant" };
 const LIBELLE_STATUT = { a_venir: "À venir", actif: "Actif", termine: "Terminé" };
@@ -59,6 +66,7 @@ export default function DetailBail() {
   const [suppression, setSuppression] = useState(false);
   const [changements, setChangements] = useState<Changement[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
+  const [partsDepot, setPartsDepot] = useState<PartDepot[]>([]);
   // Mois de loyer ouvert (v0.9.7) : détail et modification des paiements
   const [moisOuvert, setMoisOuvert] = useState<string | null>(null);
   // Formulaire « Modifier le prix du loyer »
@@ -66,6 +74,7 @@ export default function DetailBail() {
   const [nouveauLoyer, setNouveauLoyer] = useState("");
   const [moisEffet, setMoisEffet] = useState("");
   const [raison, setRaison] = useState("");
+  const [nouvelleOmh, setNouvelleOmh] = useState("");   // v0.9.12 : part de l'OMH à partir du même mois
   const [envoiChangement, setEnvoiChangement] = useState(false);
   // Fin de bail (départ du locataire)
   const [fin, setFin] = useState<FinBail | null>(null);
@@ -80,6 +89,10 @@ export default function DetailBail() {
   const [renouvLoyer, setRenouvLoyer] = useState("");
   const [renouvDebut, setRenouvDebut] = useState("");
   const [renouvMois, setRenouvMois] = useState("12");
+  // v0.9.12 : loyer avec subvention de l'OMH (part du locataire + part de l'OMH = loyer)
+  const [renouvOmh, setRenouvOmh] = useState(false);
+  const [renouvPartLoc, setRenouvPartLoc] = useState("");
+  const [renouvPartOmh, setRenouvPartOmh] = useState("");
   const [envoiRenouv, setEnvoiRenouv] = useState(false);
   // v0.9.6 : renouvellement dans le passé (historique) → mois déjà payés
   const [renouvPayes, setRenouvPayes] = useState(true);
@@ -89,6 +102,8 @@ export default function DetailBail() {
   const [cessionOuverte, setCessionOuverte] = useState(false);
   const [cessionMois, setCessionMois] = useState("");
   const [cessionnaires, setCessionnaires] = useState<LocataireForm[]>([]);
+  const [cessionOmh, setCessionOmh] = useState(false);       // v0.9.12 : le nouveau locataire a une subvention
+  const [cessionPartOmh, setCessionPartOmh] = useState("");
   const [envoiCession, setEnvoiCession] = useState(false);
   // v0.9.9 : cession dans le passé (historique) → mois déjà payés par le nouveau locataire
   const [cessionPayes, setCessionPayes] = useState(true);
@@ -102,7 +117,7 @@ export default function DetailBail() {
         supabase.from("v_baux").select("*").eq("id", id).single(),
         supabase.from("bail_locataires").select("principal, locataire:locataires(prenom, nom, telephone, courriel)").eq("bail_id", id),
         supabase.from("bail_extras").select("id, libelle, montant_cents").eq("bail_id", id),
-        supabase.from("v_soldes").select("echeance_id, mois, loyer_cents, montant_du_cents, recu_cents, en_main_cents, solde_cents, jours_retard").eq("bail_id", id).order("mois"),
+        supabase.from("v_soldes").select("*").eq("bail_id", id).order("mois"),   // avec les parts de l'OMH après 022
         supabase.from("changements_loyer").select("id, date_effet, ancien_loyer_cents, nouveau_loyer_cents, raison, created_at").eq("bail_id", id).order("created_at"),
         supabase.from("fins_bail").select("date_depart, forfait_cents, raison").eq("bail_id", id).maybeSingle(),
       ]);
@@ -126,6 +141,11 @@ export default function DetailBail() {
           .in("echeance_id", listeSoldes.map((x) => x.echeance_id))
           .eq("mode", "credit").is("deleted_at", null);
         setCredits((cr ?? []) as Credit[]);
+        const { data: dp } = await supabase.from("paiements")
+          .select("echeance_id, montant_cents, depot_id")
+          .in("echeance_id", listeSoldes.map((x) => x.echeance_id))
+          .not("depot_id", "is", null).is("deleted_at", null);
+        setPartsDepot((dp ?? []) as PartDepot[]);
       }
     }
   }, [id]);
@@ -140,6 +160,8 @@ export default function DetailBail() {
     // Par défaut : le mois prochain (le mois courant est souvent déjà payé)
     setMoisEffet(futurs[1]?.mois ?? futurs[0]?.mois ?? "");
     setNouveauLoyer(bail ? centsVersSaisie(bail.loyer_cents) : "");
+    const omhMois = futurs[1] ?? futurs[0];
+    setNouvelleOmh(omhMois && partOmh(omhMois) > 0 ? centsVersSaisie(partOmh(omhMois)) : "");
     setRaison("");
     setChangementOuvert(true);
   }
@@ -147,13 +169,23 @@ export default function DetailBail() {
   function ouvrirRenouvellement() {
     if (!bail?.date_fin) return;
     // Prix par défaut : le loyer du dernier mois du bail (hausses comprises)
-    setRenouvLoyer(centsVersSaisie(soldes[soldes.length - 1]?.loyer_cents ?? bail.loyer_cents));
+    const dernier = soldes[soldes.length - 1];
+    const loyer = dernier?.loyer_cents ?? bail.loyer_cents;
+    setRenouvLoyer(centsVersSaisie(loyer));
+    // Même subvention de l'OMH que le dernier mois, à revoir (l'OMH la recalcule chaque année)
+    const omh = dernier ? partOmh(dernier) : bail.part_omh_cents ?? 0;
+    setRenouvOmh(omh > 0);
+    setRenouvPartOmh(omh > 0 ? centsVersSaisie(omh) : "");
+    setRenouvPartLoc(omh > 0 ? centsVersSaisie(loyer - omh) : "");
     setRenouvDebut(lendemain(bail.date_fin));
     setRenouvMois("12");
     setRenouvPayes(true);
     setRenouvExclus([]);
     setRenouvOuvert(true);
   }
+
+  // Loyer avec subvention de l'OMH (v0.9.12) : un mois du bail a une part de l'OMH
+  const avecOmh = soldes.some((s) => partOmh(s) > 0) || !!bail?.part_omh_cents;
 
   // Bail qui suit celui-ci dans le logement (v0.9.6) : son renouvellement (ou sa cession),
   // sinon le prochain bail après sa fin, s'il y en a un.
@@ -209,7 +241,11 @@ export default function DetailBail() {
 
   async function enregistrerRenouvellement() {
     if (!bail) return;
-    const cents = versCents(renouvLoyer);
+    const partOmhCents = renouvOmh ? versCents(renouvPartOmh) : null;
+    const partLocCents = renouvOmh ? versCents(renouvPartLoc) : null;
+    if (renouvOmh && (partLocCents === null || partLocCents < 0)) return setErreur("Entre la part du locataire (ex. 450,00).");
+    if (renouvOmh && (partOmhCents === null || partOmhCents <= 0)) return setErreur("Entre la part de l'OMH (ex. 188,00).");
+    const cents = renouvOmh ? (partLocCents ?? 0) + (partOmhCents ?? 0) : versCents(renouvLoyer);
     if (cents === null || cents < 0) return setErreur("Entre le prix du nouveau loyer (ex. 975,00).");
     if (!renouvDebut) return setErreur("Entre la date de début du nouveau bail.");
     const mois = Number(renouvMois);
@@ -220,6 +256,7 @@ export default function DetailBail() {
     }
     if (!window.confirm(
       `Nouveau bail du ${dateLisible(renouvDebut)} au ${dateLisible(finNouveau)} à ${formatCents(cents)} par mois` +
+      (partOmhCents ? ` (locataire ${formatCents(cents - partOmhCents)} + OMH ${formatCents(partOmhCents)})` : "") +
       (bail.extras_cents ? ` (plus ${formatCents(bail.extras_cents)} d'extras et crédits, gardés)` : "") +
       ". Mêmes locataires, même mode et même jour de paiement." +
       (renouvAPayer.length ? ` ${renouvAPayer.length} mois passé${renouvAPayer.length > 1 ? "s" : ""} marqué${renouvAPayer.length > 1 ? "s" : ""} payé${renouvAPayer.length > 1 ? "s" : ""}.` : "")
@@ -229,9 +266,10 @@ export default function DetailBail() {
     const { data: nouveauId, error } = await supabase.rpc("renouveler_bail", {
       p_bail: bail.id, p_date_debut: renouvDebut, p_date_fin: finNouveau, p_loyer_cents: cents,
       p_mois_payes: renouvAPayer,
+      ...(partOmhCents ? { p_part_omh_cents: partOmhCents } : {}),   // v0.9.12 (migration 022)
     });
     setEnvoiRenouv(false);
-    if (error) return setErreur(error.message);
+    if (error) return setErreur(messageOmh(error.message, "p_part_omh_cents"));
     setRenouvOuvert(false);
     router.push(`/baux/${nouveauId}`);
   }
@@ -242,6 +280,8 @@ export default function DetailBail() {
     // Par défaut : le mois prochain
     setCessionMois(possibles.find((s) => s.mois > debutMois)?.mois ?? possibles[possibles.length - 1]?.mois ?? "");
     setCessionnaires([nouveauLocataire()]);
+    setCessionOmh(false);
+    setCessionPartOmh("");
     setCessionPayes(true);
     setCessionExclus([]);
     setCessionOuverte(true);
@@ -260,9 +300,13 @@ export default function DetailBail() {
     }
     const noms = remplis.map((l) => `${l.prenom.trim()} ${l.nom.trim()}`).join(", ");
     const loyer = soldes.find((s) => s.mois === cessionMois);
+    const partOmhCents = cessionOmh ? versCents(cessionPartOmh) : null;
+    if (cessionOmh && (partOmhCents === null || partOmhCents <= 0)) return setErreur("Entre la part de l'OMH du nouveau locataire (ex. 188,00).");
+    if (partOmhCents && loyer && partOmhCents > loyer.loyer_cents) return setErreur("La part de l'OMH dépasse le loyer.");
     if (!window.confirm(
       `Le bail de ${bail.date_fin ? `jusqu'au ${dateLisible(bail.date_fin)}` : "durée indéterminée"} passe à ${noms} le ${dateLisible(cessionMois)}` +
       (loyer ? `, au même loyer (${formatCents(loyer.montant_du_cents)} par mois)` : "") +
+      (partOmhCents ? `, avec la subvention de l'OMH (${formatCents(partOmhCents)} par mois)` : "") +
       `. Le bail actuel se termine le ${dateLisible(veille(cessionMois))} ; ` +
       "les mois avant la cession et leurs paiements restent à son nom." +
       (cessionAPayer.length ? ` ${cessionAPayer.length} mois passé${cessionAPayer.length > 1 ? "s" : ""} du nouveau locataire marqué${cessionAPayer.length > 1 ? "s" : ""} payé${cessionAPayer.length > 1 ? "s" : ""}.` : "")
@@ -275,9 +319,10 @@ export default function DetailBail() {
         prenom: l.prenom.trim(), nom: l.nom.trim(), telephone: l.telephone.trim() || null, courriel: l.courriel.trim() || null,
       })),
       p_mois_payes: cessionAPayer,
+      ...(partOmhCents ? { p_part_omh_cents: partOmhCents } : {}),   // v0.9.12 (migration 022)
     });
     setEnvoiCession(false);
-    if (error) return setErreur(error.message);
+    if (error) return setErreur(messageOmh(error.message, "p_part_omh_cents"));
     setCessionOuverte(false);
     router.push(`/baux/${nouveauId}`);
   }
@@ -326,19 +371,33 @@ export default function DetailBail() {
     const cents = versCents(nouveauLoyer);
     if (cents === null || cents < 0) return setErreur("Entre un loyer valide (ex. 950,00).");
     if (!moisEffet) return setErreur("Choisis le mois du nouveau loyer.");
-    const ancien = soldes.find((s) => s.mois === moisEffet)?.loyer_cents ?? bail.loyer_cents;
+    const leMois = soldes.find((s) => s.mois === moisEffet);
+    const ancien = leMois?.loyer_cents ?? bail.loyer_cents;
     const nb = soldes.filter((s) => s.mois >= moisEffet).length;
+    // v0.9.12 : bail avec l'OMH → le loyer et la part de l'OMH (changer_loyer_omh, migration 022)
+    const omhCents = avecOmh ? (nouvelleOmh.trim() ? versCents(nouvelleOmh) : 0) : null;
+    if (avecOmh && (omhCents === null || omhCents < 0)) return setErreur("Entre la part de l'OMH (ex. 188,00), ou 0 s'il n'y a plus de subvention.");
+    if (omhCents !== null && omhCents > cents) return setErreur("La part de l'OMH dépasse le loyer.");
+    const ancienneOmh = leMois ? partOmh(leMois) : 0;
+    const omhChange = omhCents !== null && omhCents !== ancienneOmh;
+    if (cents === ancien && !omhChange) return setErreur("Le loyer et la part de l'OMH sont déjà à ces montants pour ce mois.");
     if (!window.confirm(
-      `Le loyer passera de ${formatCents(ancien)} à ${formatCents(cents)} à partir de ${moisLisible(moisEffet)} (${nb} mois). ` +
+      (cents !== ancien ? `Le loyer passera de ${formatCents(ancien)} à ${formatCents(cents)}` : `Le loyer reste à ${formatCents(cents)}`) +
+      (omhChange ? ` ; la part de l'OMH passera de ${formatCents(ancienneOmh)} à ${formatCents(omhCents ?? 0)}` : "") +
+      ` à partir de ${moisLisible(moisEffet)} (${nb} mois). ` +
       "Les mois précédents et les paiements déjà reçus ne changent pas."
     )) return;
     setErreur(null);
     setEnvoiChangement(true);
-    const { error } = await supabase.rpc("changer_loyer", {
-      p_bail: bail.id, p_date_effet: moisEffet, p_nouveau_cents: cents, p_raison: raison.trim() || null,
-    });
+    const { error } = avecOmh
+      ? await supabase.rpc("changer_loyer_omh", {
+          p_bail: bail.id, p_date_effet: moisEffet, p_nouveau_cents: cents, p_omh_cents: omhCents, p_raison: raison.trim() || null,
+        })
+      : await supabase.rpc("changer_loyer", {
+          p_bail: bail.id, p_date_effet: moisEffet, p_nouveau_cents: cents, p_raison: raison.trim() || null,
+        });
     setEnvoiChangement(false);
-    if (error) return setErreur(error.message);
+    if (error) return setErreur(messageOmh(error.message, "changer_loyer_omh"));
     setChangementOuvert(false);
     await charger();
   }
@@ -387,6 +446,11 @@ export default function DetailBail() {
             <div className="detail-total">
               {formatCents(soldeCourant ? soldeCourant.montant_du_cents : bail.loyer_cents + bail.extras_cents)} <span className="aide">/ mois</span>
             </div>
+            {soldeCourant && partOmh(soldeCourant) > 0 && (
+              <div className="aide ligne-omh" style={{ marginTop: 0 }}>
+                Locataire {formatCents(soldeCourant.montant_du_cents - partOmh(soldeCourant))} + OMH {formatCents(partOmh(soldeCourant))} (supplément au loyer)
+              </div>
+            )}
             {prochainChangement && (
               <div className="aide" style={{ marginTop: 0 }}>
                 Loyer de {formatCents(prochainChangement.nouveau_loyer_cents)} à partir de {moisLisible(prochainChangement.date_effet)}
@@ -414,7 +478,7 @@ export default function DetailBail() {
 
           {enRetard.length > 0 && (
             <div className="message erreur">
-              En retard : {formatCents(enRetard.reduce((s, x) => s + x.solde_cents, 0))}
+              En retard : {formatCents(enRetard.reduce((s, x) => s + resteARecevoir(x), 0))}
               {" "}({enRetard.map((s) => moisLisible(s.mois)).join(", ")})
             </div>
           )}
@@ -462,6 +526,26 @@ export default function DetailBail() {
                   </div>
                 ))}
               </dd>
+              {(() => {
+                // v0.9.12 : part de l'OMH du mois courant (ou du bail), et ses changements
+                const omhMois = soldeCourant ? partOmh(soldeCourant) : bail.part_omh_cents ?? 0;
+                const valeurs = soldes.filter((s, i) => i === 0 || partOmh(s) !== partOmh(soldes[i - 1]));
+                if (!avecOmh) return null;
+                return (
+                  <>
+                    <dt>Part de l&apos;OMH</dt>
+                    <dd>
+                      {formatCents(omhMois)} <span className="pastille omh">Subvention OMH</span>
+                      <div className="aide" style={{ margin: "2px 0 0" }}>Le locataire paie le reste du loyer et les extras.</div>
+                      {valeurs.length > 1 && valeurs.map((s) => (
+                        <div key={s.mois} className="aide" style={{ margin: "2px 0 0" }}>
+                          {s.mois > moisCourant ? "Dès" : "Depuis"} {moisLisible(s.mois)} : {formatCents(partOmh(s))}
+                        </div>
+                      ))}
+                    </dd>
+                  </>
+                );
+              })()}
               {extras.map((e) => (<Fragment key={e.id}><dt>{e.libelle}</dt><dd>{formatCents(e.montant_cents)}</dd></Fragment>))}
               <dt>Paiement</dt><dd>{LIBELLE_MODE[bail.mode_paiement]}, le {bail.jour_echeance}{bail.jour_echeance === 1 ? "er" : ""} du mois</dd>
               {bail.inclusions && (<><dt>Inclusions</dt><dd>{bail.inclusions}</dd></>)}
@@ -477,6 +561,19 @@ export default function DetailBail() {
                 <label htmlFor="nouveau-loyer">Loyer par mois (sans les extras)</label>
                 <input id="nouveau-loyer" className="montant-total" inputMode="decimal" value={nouveauLoyer}
                        onChange={(e) => setNouveauLoyer(e.target.value)} />
+                {avecOmh && (
+                  <>
+                    <label htmlFor="nouvelle-omh">Part de l&apos;OMH par mois</label>
+                    <input id="nouvelle-omh" inputMode="decimal" placeholder="ex. 188,00" value={nouvelleOmh}
+                           onChange={(e) => setNouvelleOmh(e.target.value)} />
+                    <p className="aide">
+                      Loyer reconnu, avec la part de l&apos;OMH. Le locataire paie la différence
+                      {versCents(nouveauLoyer) !== null && versCents(nouvelleOmh || "0") !== null
+                        ? ` : ${formatCents((versCents(nouveauLoyer) ?? 0) - (versCents(nouvelleOmh || "0") ?? 0))} (sans les extras)` : ""}.
+                      Si seule la part de l&apos;OMH change, garde le même loyer.
+                    </p>
+                  </>
+                )}
                 <label htmlFor="mois-effet">À partir de</label>
                 <select id="mois-effet" value={moisEffet} onChange={(e) => setMoisEffet(e.target.value)}>
                   {moisFuturs.map((s) => (
@@ -551,9 +648,46 @@ export default function DetailBail() {
                 ) : (
                   <>
                     <strong>Renouveler le bail</strong>
-                    <label htmlFor="renouv-loyer">Prix du nouveau loyer par mois (sans les extras)</label>
-                    <input id="renouv-loyer" className="montant-total" inputMode="decimal" value={renouvLoyer}
-                           onChange={(e) => setRenouvLoyer(e.target.value)} />
+                    <label className="case">
+                      <input type="checkbox" checked={renouvOmh} onChange={(e) => {
+                        const oui = e.target.checked;
+                        if (oui && !renouvPartLoc && !renouvPartOmh) setRenouvPartLoc(renouvLoyer);
+                        if (!oui) {
+                          const l = versCents(renouvPartLoc); const o = versCents(renouvPartOmh);
+                          if (l !== null && o !== null) setRenouvLoyer(centsVersSaisie(l + o));
+                        }
+                        setRenouvOmh(oui);
+                      }} />
+                      <span>Loyer avec subvention de l&apos;OMH</span>
+                    </label>
+                    {renouvOmh ? (
+                      <>
+                        <div className="rangee">
+                          <div>
+                            <label htmlFor="renouv-part-loc">Part du locataire</label>
+                            <input id="renouv-part-loc" className="montant-total" inputMode="decimal" value={renouvPartLoc}
+                                   onChange={(e) => setRenouvPartLoc(e.target.value)} />
+                          </div>
+                          <div>
+                            <label htmlFor="renouv-part-omh">Part de l&apos;OMH</label>
+                            <input id="renouv-part-omh" className="montant-total" inputMode="decimal" value={renouvPartOmh}
+                                   onChange={(e) => setRenouvPartOmh(e.target.value)} />
+                          </div>
+                        </div>
+                        <p className="aide">
+                          Nouveau loyer (sans les extras) :{" "}
+                          <strong>{versCents(renouvPartLoc) !== null && versCents(renouvPartOmh) !== null
+                            ? formatCents((versCents(renouvPartLoc) ?? 0) + (versCents(renouvPartOmh) ?? 0)) : "—"}</strong>.
+                          Vérifie les montants avec la nouvelle lettre de l&apos;OMH.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <label htmlFor="renouv-loyer">Prix du nouveau loyer par mois (sans les extras)</label>
+                        <input id="renouv-loyer" className="montant-total" inputMode="decimal" value={renouvLoyer}
+                               onChange={(e) => setRenouvLoyer(e.target.value)} />
+                      </>
+                    )}
                     <label htmlFor="renouv-debut">Début</label>
                     <input id="renouv-debut" type="date" value={renouvDebut} min={lendemain(bail.date_fin)}
                            max={prochainBail ? veille(prochainBail.date_debut) : undefined}
@@ -743,6 +877,24 @@ export default function DetailBail() {
                     </div>
                   ))}
                   <button type="button" className="lien-filtres" onClick={() => setCessionnaires((a) => [...a, nouveauLocataire()])}>+ Ajouter un colocataire</button>
+                  <label className="case">
+                    <input type="checkbox" checked={cessionOmh} onChange={(e) => setCessionOmh(e.target.checked)} />
+                    <span>Le nouveau locataire a une subvention de l&apos;OMH</span>
+                  </label>
+                  {cessionOmh && (() => {
+                    const leLoyer = soldes.find((x) => x.mois === cessionMois)?.loyer_cents ?? bail.loyer_cents;
+                    const o = versCents(cessionPartOmh);
+                    return (
+                      <>
+                        <label htmlFor="cession-omh">Part de l&apos;OMH par mois</label>
+                        <input id="cession-omh" inputMode="decimal" placeholder="ex. 188,00" value={cessionPartOmh}
+                               onChange={(e) => setCessionPartOmh(e.target.value)} />
+                        <p className="aide">
+                          Loyer {formatCents(leLoyer)}{o !== null && o > 0 ? ` : locataire ${formatCents(leLoyer - o)} + OMH ${formatCents(o)}` : ""}.
+                        </p>
+                      </>
+                    );
+                  })()}
                   <p className="aide">
                     Le bail continue au nom du nouveau locataire : même loyer, même fin, mêmes extras, même mode de paiement.
                     Le bail actuel se termine la veille ; ses mois et paiements restent à son nom.
@@ -816,25 +968,46 @@ export default function DetailBail() {
               <strong>Loyers dus</strong>
               <span className="aide" style={{ margin: 0 }}>{formatCents(totalRecu)} reçus sur {formatCents(totalDu)}</span>
             </div>
-            {soldes.map((s) => (
+            {soldes.map((s) => {
+              // v0.9.13 : le montant déposé (paiements reçus, sans les crédits) est celui qu'on affiche
+              const depose = s.recu_cents - credits.filter((c) => c.echeance_id === s.echeance_id).reduce((t, c) => t + c.montant_cents, 0);
+              return (
               <button className="liste-depense lien-ligne" key={s.echeance_id} onClick={() => setMoisOuvert(s.echeance_id)}>
                 <div className="infos">
                   <div className="titre" style={{ textTransform: "capitalize" }}>{moisLisible(s.mois)}</div>
+                  {depose > 0 && depose !== s.montant_du_cents && <div className="sous">Dû {formatCents(s.montant_du_cents)}</div>}
+                  {partOmh(s) > 0 && (
+                    <div className="sous">
+                      Locataire {formatCents(s.montant_du_cents - partOmh(s))}{soldeLocataire(s) <= 0 ? " ✓" : ""}
+                      <span className="ligne-omh"> · OMH {formatCents(partOmh(s))}{soldeOmh(s) <= 0 ? " ✓" : ""}</span>
+                    </div>
+                  )}
                   {s.en_main_cents > 0 && <div className="sous">Chèque en main : {formatCents(s.en_main_cents)}</div>}
                   {credits.filter((c) => c.echeance_id === s.echeance_id).map((c) => (
                     <div key={c.id} className="sous">Crédit {formatCents(c.montant_cents)} · {c.notes}</div>
                   ))}
+                  {[...new Set(partsDepot.filter((d) => d.echeance_id === s.echeance_id).map((d) => d.depot_id))].map((dep) => {
+                    const parts = partsDepot.filter((d) => d.depot_id === dep);
+                    return (
+                      <div key={dep} className="sous">
+                        Dépôt de {formatCents(parts.reduce((t, d) => t + d.montant_cents, 0))} · {new Set(parts.map((d) => d.echeance_id)).size} mois
+                      </div>
+                    );
+                  })}
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div className="montant">{formatCents(s.montant_du_cents)}</div>
-                  {s.solde_cents <= 0
-                    ? <span className="pastille ok">Payé</span>
+                  <div className="montant">{formatCents(depose > 0 ? depose : s.montant_du_cents)}</div>
+                  {resteARecevoir(s) <= 0
+                    ? <span className="pastille ok">{s.solde_cents < 0 ? `Payé (+${formatCents(-s.solde_cents)})` : "Payé"}</span>
+                    : partOmh(s) > 0 && soldeLocataire(s) <= 0
+                      ? <span className="pastille omh">{s.jours_retard > 0 ? `Retard OMH ${s.jours_retard} j` : "OMH à recevoir"}</span>
                     : s.jours_retard > 0
                       ? <span className="pastille vacant">Retard {s.jours_retard} j</span>
                       : s.recu_cents > 0 ? <span className="pastille">Partiel</span> : null}
                 </div>
               </button>
-            ))}
+              );
+            })}
             <p className="aide">Touche un mois pour voir ses paiements, les modifier ou en ajouter un.</p>
           </section>
           {moisOuvert && <FeuilleLoyer echeanceId={moisOuvert} depuisBail onFermer={() => setMoisOuvert(null)} onChange={charger} />}

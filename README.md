@@ -1,7 +1,7 @@
 # Immeubles So-Max — gestion des immeubles
 
 Application web progressive (PWA) : Next.js 15 + Supabase.
-Version 0.9.9.1 : correctif — sur un bail d'un seul mois, la carte « Cession de bail » explique pourquoi on ne peut pas céder et quoi faire, avec « C'est une cession de ce bail précédent » si un bail finit la veille. 0.9.9 : Baux — « Cession de bail » aussi sur un bail terminé, avec une date passée, pour entrer l'historique (case « Tous les mois passés sont payés » avec mois à exclure pour le nouveau locataire). 0.9.8 : Baux — la fin du bail tombe toujours le dernier jour du mois (durée « Autre » : menus Mois et Année). 0.9.7 : toucher un paiement de loyer ouvre son détail pour le modifier ou l’annuler. 0.9.6 : Baux — « Renouveler le bail » aussi sur un bail terminé, avec des dates passées, pour entrer l'historique des baux (case « Tous les mois passés sont payés » avec mois à exclure ; la fin s'arrête la veille du bail suivant) ; « C'est un renouvellement de ce bail » raccorde le bail suivant déjà entré. 0.9.5 : Baux — bouton « Cession de bail » sur la fiche (le bail continue au nom du nouveau locataire, même loyer et même fin), type de bail (nouveau, renouvellement, cession) ; dossier prêteur — pour chaque bail, toutes les copies de la chaîne (bail d'origine signé, renouvellements, cession), même avant la période choisie, colonne « Type » et onglet « Copies des baux ». 0.9.4 : Nouveau bail — exemple « stationnement » pour les extras, question « Il y a des mois passés… voulez-vous les marquer comme payés ? » si la case n'est pas cochée, alerte si aucune photo du bail, sections photos « Enquête de crédit » et « Règlements d'immeuble » (aussi sur la fiche du bail) ; Dépenses — la liste du mois d'abord, toucher le montant du haut affiche le graphique ; Loyers — l'encadré du haut (total et par immeuble) montre les dépôts faits. 0.9.3 : onglet Baux — filtre par logement (sous l'immeuble choisi) et par état des baux (actifs, à venir, renouvelés, départ prévu, relocation faite, terminés) ; « Renouveler le bail » sur la fiche d'un bail actif (prix, début le lendemain de la fin, 12 mois par défaut) ; « Changer le loyer » devient « Modifier le prix du loyer ». 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
+Version 0.9.14 : le montant inscrit dans un paiement est le vrai dépôt — il n'est jamais changé par le bail (même enregistré sans changer le montant), et la liste des loyers dus de la fiche du bail affiche le montant déposé (avec « Dû X » dessous s'il diffère). 0.9.13 : correctif — les mois « Marqué payé à la création du bail » suivent le bail quand on le corrige avec « Modifier le bail » (ex. extra de -112 $ ajouté après coup : le paiement passe de 1 107 $ à 995 $), et un trop-payé s'affiche (« Payé (+112,00 $) »). 0.9.12 : loyer avec subvention de l'OMH (supplément au loyer) — case sur le bail (nouveau, modifier, renouveler, cession), part du locataire et part de l'OMH, deux paiements à recevoir chaque mois (Loyers, fiche du bail, retards, dépôts, alertes), revenus de loyers dans le Rapport d'impôts. 0.9.11 : Baux — bouton « Période » (baux sur 30 ans). 0.9.10 : un dépôt qui paie plusieurs mois. 0.9.9.1 : correctif — sur un bail d'un seul mois, la carte « Cession de bail » explique pourquoi on ne peut pas céder et quoi faire, avec « C'est une cession de ce bail précédent » si un bail finit la veille. 0.9.9 : Baux — « Cession de bail » aussi sur un bail terminé, avec une date passée, pour entrer l'historique (case « Tous les mois passés sont payés » avec mois à exclure pour le nouveau locataire). 0.9.8 : Baux — la fin du bail tombe toujours le dernier jour du mois (durée « Autre » : menus Mois et Année). 0.9.7 : toucher un paiement de loyer ouvre son détail pour le modifier ou l’annuler. 0.9.6 : Baux — « Renouveler le bail » aussi sur un bail terminé, avec des dates passées, pour entrer l'historique des baux (case « Tous les mois passés sont payés » avec mois à exclure ; la fin s'arrête la veille du bail suivant) ; « C'est un renouvellement de ce bail » raccorde le bail suivant déjà entré. 0.9.5 : Baux — bouton « Cession de bail » sur la fiche (le bail continue au nom du nouveau locataire, même loyer et même fin), type de bail (nouveau, renouvellement, cession) ; dossier prêteur — pour chaque bail, toutes les copies de la chaîne (bail d'origine signé, renouvellements, cession), même avant la période choisie, colonne « Type » et onglet « Copies des baux ». 0.9.4 : Nouveau bail — exemple « stationnement » pour les extras, question « Il y a des mois passés… voulez-vous les marquer comme payés ? » si la case n'est pas cochée, alerte si aucune photo du bail, sections photos « Enquête de crédit » et « Règlements d'immeuble » (aussi sur la fiche du bail) ; Dépenses — la liste du mois d'abord, toucher le montant du haut affiche le graphique ; Loyers — l'encadré du haut (total et par immeuble) montre les dépôts faits. 0.9.3 : onglet Baux — filtre par logement (sous l'immeuble choisi) et par état des baux (actifs, à venir, renouvelés, départ prévu, relocation faite, terminés) ; « Renouveler le bail » sur la fiche d'un bail actif (prix, début le lendemain de la fin, 12 mois par défaut) ; « Changer le loyer » devient « Modifier le prix du loyer ». 0.9.2 : graphiques — Dépenses (anneau par catégorie et barres, en mode Mois comme en mode Année), Baux (taux d'occupation et loyers par mois, toucher = par immeuble), Loyers (à encaisser dans le mois, toucher = par immeuble) ; boutons « Appeler » et « Texter » pour les loyers en retard. 0.9.1 : onglet Dépenses — choix d'un ou plusieurs immeubles (puces, gardé dans l'adresse ?i=…) ; Nouveau bail — case « Tous les mois passés sont payés » avec mois à exclure (marqués payés dans Loyers), prix le plus récent du logement affiché avant le loyer. 0.9.0 : onglet Véhicules — plusieurs véhicules (flèches ‹ ›, marque · modèle · couleur), trajets fréquents revus ; Profil — Actifs séparés en Immeubles et Véhicules (vendre ou supprimer), « Supprimer cet immeuble de partout », sous-section Rapport d'impôts qui regroupe tous les exports. 0.8.9 : centre de notifications — cloche jaune-orangé quand il y a du non lu, tiroir avec notifications lues / non lues, préférences, page de test dans le Profil, notifications poussées sur l'iPhone (Web Push). 0.8.8 : onglet Dépenses simplifié — récapitulatif en haut, navigation Mois / Année avec flèches (comme Loyers), filtres retirés. 0.8.7 : onglet Baux — filtre par années, dossier prêteur par période, historique d'un logement, modification d'un bail, remplacement d'un bail en cours. 0.8.6 : page Frais fixes (prêts hypothécaires avec capital / intérêts, assurances, taxes). 0.8.5 : en-tête « Immeubles So-Max », 5 onglets, page Profil et Actifs. Module 1 complet (dépenses) ; Module 2 : baux, copies de baux, dossier prêteur, onglet Loyers (« Reçu » en un geste, partiels, retards). Thème vert.
 
 ## 1. Base de données
 
@@ -48,6 +48,16 @@ Dans Supabase > SQL Editor, exécuter dans l'ordre :
 20. `supabase/020_ceder_bail_termine.sql` — `ceder_bail(bail, date, locataires, mois_payes)` : aussi pour un bail terminé
     (date passée), mois passés du nouveau locataire marqués payés, mois « Marqué payé » automatiques de l'ancien bail après
     la cession retirés, refus si un bail suit déjà (v0.9.9).
+21. `supabase/021_depot_plusieurs_mois.sql` — `paiements.depot_id` ; RPC `repartir_depot` et `annuler_depot` (v0.9.10).
+22. `supabase/022_subvention_omh.sql` — loyer avec subvention de l'OMH : `baux.part_omh_cents`, `echeances.omh_cents`
+    (déclencheur : copiée du bail à la création du mois), `paiements.payeur` (`locataire` / `omh`), mode `depot_direct` ;
+    `v_soldes` + `omh_cents`, `recu_omh_cents`, `solde_locataire_cents`, `solde_omh_cents` ; `v_baux` + `part_omh_cents` ;
+    `marquer_mois_payes` (un paiement par part), `creer_bail` (`part_omh_cents`), `renouveler_bail` et `ceder_bail`
+    (+ `p_part_omh_cents`), RPC `modifier_bail_omh`, `changer_loyer_omh`, `definir_part_omh` ; `repartir_depot` (`payeur`) ;
+    `alertes_du_jour` : retard du locataire et retard de l'OMH séparés (v0.9.12).
+23. `supabase/023_mois_payes_suivent.sql` — `paiements.auto` (paiement « Marqué payé à la création du bail » jamais modifié
+    à la main ; déclencheur `trg_paiements_auto`) ; RPC `realigner_mois_payes(bail)` appelée par `modifier_bail` et
+    `modifier_bail_omh` ; correction unique des baux déjà corrigés (v0.9.13).
 
 ## 2. Lancer en local
 
@@ -128,7 +138,11 @@ Sans cette configuration, le centre de notifications (cloche) fonctionne quand m
 | `components/FormulaireBail.tsx` | Formulaire partagé Nouveau bail / Modifier le bail ; questions avant d'enregistrer (mois passés, bail sans photo) et photos des 3 documents (v0.9.4) |
 | `components/DocumentsBail.tsx` | Fiche du bail : une section de documents (bail signé, enquête de crédit, règlements d'immeuble) (v0.9.4) |
 | `lib/documents.ts` | Types de documents d'un bail (`DOCUMENTS_BAIL`) et envoi d'un fichier (`televerserDocument`) (v0.9.4) |
-| `lib/baux.ts` | Période de l'onglet Baux : années proposées, bail dans la période, libellé « 2024 à 2026 » ; états des baux pour le filtre (v0.9.3) |
+| `lib/baux.ts` | Période de l'onglet Baux : années proposées (depuis le plus vieux bail, v0.9.11), adresse ?a=, bail dans la période, libellé « 2024 à 2026 » ; états des baux pour le filtre (v0.9.3) |
+| `lib/omh.ts` | Loyer avec subvention de l'OMH : part de l'OMH d'un bail, vérification de la migration 022 (v0.9.12) |
+| `lib/exportLoyers.ts` | Rapport d'impôts : loyers_AAAA.xlsx (par immeuble et par mois : dus, reçus du locataire, reçus de l'OMH, crédits) (v0.9.12) |
+| `lib/paquets.ts` | Lectures par paquets de 1000 lignes et par lots de 100 identifiants (v0.9.11) |
+| `components/ChoixAnnees.tsx` | Feuille « Période » de l'onglet Baux : choix rapides, De … à …, grille des années (v0.9.11) |
 | `lib/exportBaux.ts` | Dossier prêteur par immeuble et par période : etat_des_loyers.xlsx (un bail par ligne, loyers dus et reçus de la période, onglet « Par année ») + dossier baux/ |
 | `app/vehicule/page.tsx` | Onglet Véhicules : flèches ‹ › entre les véhicules, trajets (fréquents, motif), frais (reçu), compteur, résumé du prorata |
 | `components/ConstructeurTrajet.tsx` | Composer un trajet par lieux ; distances retenues dans les deux sens |
@@ -333,8 +347,10 @@ dossier_depenses_2026-01-01_2026-12-31.zip
 
 ## Baux : période, historique, modification (v0.8.7)
 
-- **Période** : puces d'années en haut de l'onglet Baux (année courante à année courante − 6), une ou plusieurs ;
-  par défaut l'année courante. Gardée dans l'adresse (`?a=2026,2025`), avec le filtre d'immeuble (`&i=<id>`).
+- **Période** : bouton « Période » en haut de l'onglet Baux (v0.9.11, remplace les puces d'années) ; il ouvre une feuille avec
+  choix rapides (Cette année, L'an dernier, 5 / 10 dernières années, Toutes), une plage « De … à … », et la grille des années
+  avec « Tout sélectionner ». Les années vont de l'année du plus vieux bail à l'année courante. Par défaut l'année courante.
+  Gardée dans l'adresse (`?a=tout`, `?a=2016-2026`, `?a=1998,2010-2012`), avec le filtre d'immeuble (`&i=<id>`).
   Un bail fait partie de la période s'il couvre au moins un jour d'une année choisie ; les baux à venir suivent l'année courante.
   Recherche par locataire (sans accents) ou numéro de logement.
 - **Dossier prêteur** : le bouton affiche la période (ex. « 2024 à 2026 ») et le ZIP ne contient que les baux de la période
@@ -480,6 +496,66 @@ Pour entrer les baux passés d'un logement : entrer le plus vieux bail avec « N
   (terminé, ou avec un bail précédent libre), carte d'explication : allonger la fin avec « Modifier le bail », ou, si un bail
   finit la veille sans suite, bouton « C'est une cession de ce bail précédent » (mise à jour directe de `baux` :
   `bail_precedent_id` + `origine = 'cession'`). Pas de migration.
+
+## Un dépôt pour plusieurs mois (v0.9.10)
+
+- Feuille du mois : « + Un dépôt pour plusieurs mois », ou le lien dans l'avertissement quand un montant (nouveau ou corrigé)
+  dépasse ce qui reste dû du mois. Montant, mode, date, référence, puces des mois du bail (préchoisis : ce mois, puis les mois
+  d'avant, puis d'après, jusqu'à couvrir le montant) ; aperçu de la part de chaque mois (Partiel / Trop-payé) et des paiements remplacés.
+- RPC `repartir_depot` (migration 021) : parts avec le même `paiements.depot_id`, le plus ancien mois d'abord, le dernier prend le
+  reste ; remplace les paiements non-crédit des mois choisis (et tout l'ancien dépôt du paiement corrigé). `annuler_depot` annule
+  toutes les parts.
+- Affichage : « Part d'un dépôt de X $ (N mois) » dans la feuille, « Dépôt de X $ · N mois » sous le mois dans la fiche du bail.
+
+## Baux sur 30 ans (v0.9.11)
+
+- Période de l'onglet Baux : voir « Baux : période… » plus haut ; composant `components/ChoixAnnees.tsx`, fonctions
+  `anneesDisponibles`, `lireAnnees`, `ecrireAnnees`, `libellePeriode` (plages regroupées : « 1998 à 2000, 2005 et 2010 à 2026 ») dans `lib/baux.ts`.
+- Lectures longues : `lib/paquets.ts` (`toutesLesLignes` par paquets de 1000, `parLots` par lots de 100 identifiants).
+  Utilisé pour la liste des baux, le dossier prêteur (baux, copies, loyers dus/reçus) et l'historique d'un logement.
+- Graphique « Loyers par mois » : toujours une seule année (la plus récente de la période).
+- Nouveau bail : fin « Autre » proposée de l'année du début (40 ans en arrière si le début est vide) à 10 ans après ;
+  plus de 24 mois passés → mois rangés par année (touche une année pour l'ouvrir) et résumé « de … à … » dans la question.
+- Pas de migration.
+
+## Loyer avec subvention de l'OMH (v0.9.12)
+
+Programme de supplément au loyer (PSL) : le loyer reconnu (ex. 638 $) est payé en deux parts chaque mois, la part du
+locataire (450 $) et la part de l'OMH (188 $).
+
+- Bail : case « Loyer avec subvention de l'OMH » dans Nouveau bail et Modifier le bail (`FormulaireBail`) : on saisit la part
+  du locataire et la part de l'OMH, le loyer = la somme. Les extras (stationnement…) et les crédits mensuels sont au locataire.
+  Renouveler : case et deux parts, préremplies avec le dernier mois (à revoir avec la lettre de l'OMH). Cession : case
+  « Le nouveau locataire a une subvention de l'OMH » + part de l'OMH (la subvention suit le ménage, elle n'est pas copiée).
+  « Modifier le prix du loyer » : champ « Part de l'OMH par mois » ; seule la part de l'OMH peut changer (RPC `changer_loyer_omh`).
+  Modifier le bail : la nouvelle part s'applique aux mois qui avaient la part actuelle (`modifier_bail_omh`).
+- Paiements : `paiements.payeur`. Feuille du mois : encadrés « Part du locataire » / « Part de l'OMH » (Payé ou Reste),
+  choix « Paiement reçu de : Locataire / OMH » (montant prérempli avec le reste de cette part ; modes de l'OMH : Dépôt direct,
+  Chèque), pastille « OMH » sur ses paiements, « Payé par » dans le détail d'un paiement. Après un paiement, la feuille reste
+  ouverte s'il reste l'autre part. Un dépôt pour plusieurs mois est du locataire ou de l'OMH (`repartir_depot` + `payeur`).
+  Les crédits sont toujours au locataire. « Tous les mois passés sont payés » inscrit deux paiements par mois.
+- Retards : un mois est en retard si l'une des deux parts n'est pas payée (`v_soldes.jours_retard`). Onglet Loyers : la part de
+  l'OMH en retard a sa propre ligne (pastille OMH, « Vérifier avec l'OMH », sans Appeler ni Texter) ; le texto au locataire
+  ne demande que sa part. Alertes : « Loyer en retard » (part du locataire, clé `loyer:`) et « Supplément OMH en retard »
+  (clé `omh:`), même type `loyer_retard`.
+- Encadré des dépôts : « Dont X $ de l'OMH ». Fiche du bail : « Locataire X $ + OMH Y $ », ligne « Part de l'OMH » (et ses
+  changements), parts cochées ✓ sous chaque mois des loyers dus, pastille « OMH à recevoir » / « Retard OMH ».
+- Rapport d'impôts : bouton « Revenus de loyers AAAA (Excel) » (`lib/exportLoyers.ts`). Dossier prêteur : la subvention
+  est indiquée à côté des locataires.
+- Sans la migration 022, l'app fonctionne comme avant (les écrans lisent `select("*")` ; un bail avec l'OMH affiche
+  « La mise à jour de la base (022) pour l'OMH n'est pas encore faite »).
+
+## Les mois marqués payés suivent le bail (v0.9.13)
+
+- Un paiement inscrit par « Tous les mois passés sont payés » (Nouveau bail, Renouveler, Cession) est « automatique »
+  (`paiements.auto`). Quand « Modifier le bail » change le dû d'un mois (loyer, extras, crédits mensuels, part de l'OMH),
+  `realigner_mois_payes` ajuste ce paiement pour que le mois reste payé juste (ou le retire s'il n'y a plus rien à payer).
+- Un paiement modifié à la main (montant, mode, statut, date, payeur) n'est plus automatique et n'est jamais touché.
+  Un paiement d'un dépôt de plusieurs mois non plus. « Modifier le prix du loyer » ne change toujours pas les paiements.
+- v0.9.14 : enregistrer un paiement dans son détail, même sans changer le montant, en fait un vrai dépôt (plus jamais
+  réaligné). Fiche du bail : chaque mois affiche le montant déposé (paiements reçus sans les crédits), « Dû X » dessous
+  s'il diffère ; onglet Loyers : « reçu X » affiché quand il diffère du dû.
+- Trop-payé visible : pastille « Payé (+X $) » dans Loyers et sur la fiche du bail ; message dans la feuille du mois.
 
 ## Thème
 

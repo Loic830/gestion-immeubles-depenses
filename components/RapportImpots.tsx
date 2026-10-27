@@ -10,6 +10,7 @@ import { chargerDepensesAnnee, exporterCsvDepenses } from "@/lib/exportDepenses"
 //   - Dépenses + reçus (ZIP) : depenses.xlsx (avec la part des immeubles des frais de véhicule) + recus/
 //   - Dépenses en CSV seulement
 //   - Dossier de chaque véhicule : vehicule_AAAA.xlsx (résumé, journal de bord, frais) + reçus
+//   - v0.9.12 : revenus de loyers : loyers_AAAA.xlsx (reçus du locataire et de l'OMH, par immeuble et par mois)
 
 type Vehicule = Pick<FicheVehicule, "id" | "nom" | "marque" | "modele" | "couleur" | "actif">;
 
@@ -69,6 +70,14 @@ export default function RapportImpots() {
     return `Fichier CSV créé : ${lignes.length} ligne(s).`;
   });
 
+  const exporterLoyers = () => lancer("loyers", async (etape) => {
+    const { exporterLoyersAnnee } = await import("@/lib/exportLoyers");
+    const r = await exporterLoyersAnnee(annee, etape);
+    if (r.lignes === 0) return `Aucun loyer en ${annee}.`;
+    return `Fichier créé : ${r.lignes} mois de loyer, ${formatCents(r.recu ?? 0)} reçus` +
+      (r.omh ? `, dont ${formatCents(r.omh)} de l'OMH.` : ".");
+  });
+
   const exporterVehicule = (v: Vehicule) => lancer(v.id, async (etape) => {
     const { exporterDossierVehicule } = await import("@/lib/exportVehicule");
     const r = await exporterDossierVehicule({ id: v.id, nom: nomVehicule(v) }, annee, immeubles, etape);
@@ -99,6 +108,12 @@ export default function RapportImpots() {
         {libelle("csv", "Exporter en CSV seulement")}
       </button>
       <p className="aide">Le ZIP comprend aussi la part des immeubles des frais de véhicule (T776 ligne 9281).</p>
+
+      <strong style={{ display: "block", marginTop: 16 }}>Loyers</strong>
+      <button className="bouton plein" style={{ marginTop: 8 }} onClick={exporterLoyers} disabled={enCours !== null}>
+        {libelle("loyers", `Revenus de loyers ${annee} (Excel)`)}
+      </button>
+      <p className="aide">Loyers dus et reçus par immeuble et par mois : part du locataire, supplément de l&apos;OMH et crédits.</p>
 
       {vehicules.length > 0 && (
         <>
