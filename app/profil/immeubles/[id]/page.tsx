@@ -14,6 +14,7 @@ import BarreOnglets from "@/components/BarreOnglets";
 // l'historique (loyers, dépenses, baux).
 // « Supprimer cet immeuble de partout » (v0.9.0) : RPC supprimer_immeuble, suppression douce
 // de l'immeuble et de tout ce qui s'y rattache (les données restent en base).
+// Lien « Entretien » (v0.9.16) : équipements de l'immeuble, page /entretien?i=<id>.
 
 type Immeuble = {
   id: string;
@@ -279,6 +280,16 @@ export default function PageDetailImmeuble() {
         </div>
         <span aria-hidden="true">›</span>
       </Link>
+
+      <div className="carte">
+        <Link href={`/entretien?i=${id}`} className="ligne-actif">
+          <div className="infos">
+            <div className="titre">Entretien</div>
+            <div className="sous">Chauffe-eau, fournaise, toiture… de cet immeuble et de ses logements</div>
+          </div>
+          <span aria-hidden="true">›</span>
+        </Link>
+      </div>
 
       <h2 className="immeuble-titre">Logements ({actifs.length})</h2>
       <div className="carte">

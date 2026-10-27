@@ -291,6 +291,17 @@ export default function PageProfil() {
         </button>
       )}
 
+      <h2 className="immeuble-titre" style={{ margin: "24px 0 8px" }}>Entretien</h2>
+      <div className="carte">
+        <Link href="/entretien" className="ligne-actif">
+          <div className="infos">
+            <div className="titre">Équipements et entretien</div>
+            <div className="sous">Chauffe-eau, fournaise, toiture… date de remplacement et alerte dans la cloche</div>
+          </div>
+          <span aria-hidden="true">›</span>
+        </Link>
+      </div>
+
       <h2 className="immeuble-titre" style={{ margin: "24px 0 8px" }}>Rapport d&apos;impôts</h2>
       <RapportImpots />
 

@@ -3,6 +3,9 @@
 // Taux par versement mensuel : i = (1 + r/2)^(2/12) − 1 (r = taux annuel, ex. 0,0479).
 // Chaque versement : intérêts = solde × i (arrondi au cent), capital = versement − intérêts.
 // Rien n'est stocké : tout se recalcule à partir du prêt (un taux corrigé met tout à jour).
+// v0.9.18 : si le tableau d'amortissement du prêteur est entré (table hypotheque_versements),
+// ses lignes sont reprises telles quelles (la banque compte l'intérêt au nombre de jours) ;
+// les versements après sa dernière ligne sont recalculés à partir du dernier solde.
 
 import { ajouterMois } from "./dates";
 
@@ -12,6 +15,7 @@ export type Pret = {
   premier_versement: string;      // AAAA-MM-JJ
   fin_terme: string;              // AAAA-MM-JJ
   versement_cents: number;
+  tableau_preteur?: Versement[];  // lignes du tableau du prêteur, s'il est entré
 };
 
 export type Versement = {
@@ -20,6 +24,7 @@ export type Versement = {
   interets: number;               // cents
   capital: number;                // cents
   solde: number;                  // solde après le versement, cents
+  preteur?: boolean;              // ligne reprise du tableau du prêteur (v0.9.18)
 };
 
 export type ResumeAnnee = {
@@ -46,9 +51,12 @@ export function versementTheorique(soldeCents: number, tauxPct: number, mois: nu
 /** Tableau des versements du terme : du premier versement jusqu'à la fin du terme (incluse). */
 export function tableauVersements(p: Pret): Versement[] {
   const i = tauxMensuel(Number(p.taux));
-  const lignes: Versement[] = [];
-  let solde = p.solde_debut_terme_cents;
-  for (let k = 0; k < 600 && solde > 0; k++) {
+  const lignes: Versement[] = (p.tableau_preteur ?? [])
+    .filter((v) => v.date <= p.fin_terme)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((v, k) => ({ ...v, no: k + 1, preteur: true }));
+  let solde = lignes.length ? lignes[lignes.length - 1].solde : p.solde_debut_terme_cents;
+  for (let k = lignes.length; k < 600 && solde > 0; k++) {
     const date = ajouterMois(p.premier_versement, k);
     if (date > p.fin_terme) break;
     const interets = Math.round(solde * i);

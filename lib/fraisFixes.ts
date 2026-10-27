@@ -1,7 +1,7 @@
 // Frais fixes (v0.8.6) : types et calculs de la page (hypothèques, assurances, taxes).
 // Les intérêts viennent de lib/amortissement.ts ; le relevé du prêteur a priorité.
 
-import { resumeAnnee, tableauVersements, type ResumeAnnee } from "./amortissement";
+import { resumeAnnee, tableauVersements, type ResumeAnnee, type Versement } from "./amortissement";
 import { aujourdhuiIso } from "./dates";
 
 export type ImmeubleFF = { id: string; nom: string; actif: boolean };
@@ -20,7 +20,28 @@ export type Hypotheque = {
   amortissement_mois: number | null;
   versement_cents: number;
   notes: string | null;
+  tableau_preteur?: Versement[];  // v0.9.18 : tableau d'amortissement du prêteur (hypotheque_versements)
 };
+
+/** Ligne de la table hypotheque_versements (v0.9.18). */
+export type LigneTableauPreteur = {
+  hypotheque_id: string;
+  no: number;
+  date_versement: string;
+  interets_cents: number;
+  capital_cents: number;
+  solde_cents: number;
+};
+
+/** Range les lignes du tableau du prêteur sur chaque prêt. */
+export function avecTableauPreteur(hypotheques: Hypotheque[], lignes: LigneTableauPreteur[]): Hypotheque[] {
+  return hypotheques.map((h) => {
+    const t = lignes.filter((l) => l.hypotheque_id === h.id).map((l) => ({
+      no: l.no, date: l.date_versement, interets: Number(l.interets_cents), capital: Number(l.capital_cents), solde: Number(l.solde_cents),
+    }));
+    return t.length ? { ...h, tableau_preteur: t } : h;
+  });
+}
 
 export type Releve = {
   id: string;

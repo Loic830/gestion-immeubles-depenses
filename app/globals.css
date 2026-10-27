@@ -559,3 +559,6 @@ button.paiement-ligne { text-align: left; }
 .parts-omh > div > span:first-child { color: var(--discret); }
 .parts-omh strong { font-size: 17px; }
 .ligne-omh { color: var(--omh); }
+
+/* Entretien (v0.9.16) : sections repliables de la feuille d'un équipement */
+.details-equipement { margin-top: 16px; border-top: 1px solid var(--bordure); padding-top: 8px; }

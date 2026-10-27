@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **27 octobre 2026**, version **0.9.15**.
+> ou par une nouvelle conversation avec Claude. État au **27 octobre 2026**, version **0.9.18**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -30,7 +30,8 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
 5. **Frais fixes** 🏦 (v0.8.6) : par immeuble et par année, prêts hypothécaires (plusieurs par immeuble, ventilation capital / intérêts recalculée, relevé du prêteur prioritaire), assurances (police en PDF), taxes foncières et scolaires par versement ; « Payé » inscrit la dépense dans Dépenses.
 6. **Profil** (v0.8.5) : mon compte, déconnexion, Actifs séparés en **Immeubles** (ajout, logements, vente, « Supprimer cet immeuble de partout ») et **Véhicules** (ajout, modification, vente, suppression) ; **Rapport d'impôts** (v0.9.0) : année + dépenses et reçus (ZIP), CSV, dossier de chaque véhicule ; en bas, « Tester les notifications possibles » (v0.8.9).
-7. **Notifications** 🔔 (v0.8.9) : cloche jaune-orangé s'il y a du non lu ; tiroir (plus récent en haut, contour jaune-orangé = non lue, toucher = lue / non lue) ; préférences par type et par immeuble ou véhicule ; notifications poussées sur l'iPhone (Web Push, app sur l'écran d'accueil).
+7. **Entretien** 🔧 (v0.9.16, Profil > Entretien) : équipements des parties communes et des logements (chauffe-eau, fournaise, toiture…), date de remplacement prévue (installation + durée de vie, ou à la main), entretien régulier facultatif, « Remplacé » garde l'historique ; alertes dans la cloche.
+8. **Notifications** 🔔 (v0.8.9) : cloche jaune-orangé s'il y a du non lu ; tiroir (plus récent en haut, contour jaune-orangé = non lue, toucher = lue / non lue) ; préférences par type et par immeuble ou véhicule ; notifications poussées sur l'iPhone (Web Push, app sur l'écran d'accueil).
 
 ---
 
@@ -98,8 +99,11 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | 022 | `022_subvention_omh.sql` | Loyer avec subvention de l'OMH : `baux.part_omh_cents`, `echeances.omh_cents` (déclencheur `trg_echeances_omh` : copiée du bail à la création de chaque mois), `paiements.payeur` (`locataire` / `omh`), mode `depot_direct` ; `v_soldes` + `omh_cents`, `recu_omh_cents`, `solde_locataire_cents`, `solde_omh_cents` (retard si l'une des parts n'est pas payée) ; `v_baux` + `part_omh_cents` ; `marquer_mois_payes` (un paiement par part), `creer_bail` (`part_omh_cents`) ; `renouveler_bail` et `ceder_bail` + `p_part_omh_cents` (remplacent les versions de 019/020) ; RPC `modifier_bail_omh(p)`, `changer_loyer_omh(…)`, `definir_part_omh(…)` ; `repartir_depot` + `payeur` ; `alertes_du_jour` : alerte « Supplément OMH en retard » (clé `omh:`) séparée de celle du locataire (v0.9.12) | **à exécuter** |
 
 | 023 | `023_mois_payes_suivent.sql` | `paiements.auto` (« Marqué payé à la création du bail » jamais modifié à la main ; déclencheur `trg_paiements_auto` le remet à faux lors d'une modification) ; `marquer_mois_payes` (auto = vrai) ; RPC `realigner_mois_payes(bail)` ; `modifier_bail` et `modifier_bail_omh` l'appellent ; correction unique des baux existants (v0.9.13) | **à exécuter** |
+| 024 | `024_entretien.sql` | table `equipements`, vue `v_equipements`, RPC `remplacer_equipement`, alertes `equipement_remplacement` / `equipement_entretien`, `supprimer_immeuble` retire les équipements (v0.9.16) | **à exécuter** |
 
-> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `024_…`.
+| 025 | `025_tableau_preteur.sql` | table `hypotheque_versements` (tableau d'amortissement du prêteur, a priorité sur le calcul) ; `documents.hypotheque_id`, type `pret`, contrainte `document_rattache` (v0.9.18) | **à exécuter** |
+
+> Mettre à jour la colonne « État » quand Loïc confirme. La prochaine migration sera `026_…`.
 > Vérifier aussi que les fichiers 005 à 012 sont bien poussés dans le dépôt GitHub.
 
 **Modèle — points clés**
@@ -155,11 +159,13 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 | `lib/omh.ts` | loyer avec subvention de l'OMH : part de l'OMH d'un bail, vérification de la migration 022, message d'erreur (v0.9.12) |
 | `lib/exportLoyers.ts` | Rapport d'impôts : revenus de loyers loyers_AAAA.xlsx (par immeuble, par mois ; locataire, OMH, crédits) (v0.9.12) |
 | `lib/exportPaiements.ts` | Rapport d'impôts : paiements_AAAA.xlsx pour balancer avec la banque (un dépôt par ligne selon la date du dépôt ; total par mois et par mode) (v0.9.15) |
+| `app/entretien/page.tsx`, `components/FeuilleEquipement.tsx`, `lib/entretien.ts` | Entretien : liste par immeuble et logement, feuille ajouter / modifier / remplacer, types et durées de vie (v0.9.16) |
 | `lib/paquets.ts` | lectures par paquets de 1000 lignes / lots de 100 identifiants (30 ans de baux, v0.9.11) |
 | `app/api/notifications/envoyer/route.ts` | seule route serveur : GET = Vercel Cron (calcul + envoi à tous), POST = envoi des tests de la personne connectée |
 | `public/sw.js` | service worker : affiche la notification ; la toucher ouvre `/` sans la marquer lue |
 | `components/FeuillePret.tsx`, `FeuilleReleve.tsx`, `FeuilleAssurance.tsx`, `FeuilleTaxes.tsx`, `FeuillePaiement.tsx` | feuilles (formulaires du bas) de la page Frais fixes |
-| `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels |
+| `lib/amortissement.ts` | capital / intérêts d'un prêt à taux fixe, composé semestriellement, versements mensuels ; tableau du prêteur s'il est entré (v0.9.18) |
+| `components/DocumentsPret.tsx` | « Documents du prêt » sous chaque prêt dans Frais fixes (v0.9.18) |
 | `lib/fraisFixes.ts` | types Frais fixes, intérêts de l'année (relevé prioritaire), statut des versements, totaux |
 | `components/FormulaireBail.tsx` | formulaire partagé Nouveau bail / Modifier le bail (validation, paramètre `p` des RPC) ; questions avant d'enregistrer (mois passés, bail sans photo) (v0.9.4) |
 | `components/DocumentsBail.tsx` | fiche du bail : une section de documents (bail signé, enquête de crédit, règlements) (v0.9.4) |
@@ -266,6 +272,22 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.18)**
+- Exécuter `025_tableau_preteur.sql`, puis le script `tableaux-banque-laurentienne.sql` (livré à part, pas dans le dépôt :
+  tableaux des prêts Robert-Jean 715 0091899 01 et Gauthier 715 0091909 01, transcrits des photos de Maxime ; crée le prêt s'il manque). Décompresser, `npm run build`, pousser.
+- Demande de Maxime (27 oct.) : « pourquoi j'ai une différence » entre l'app et le tableau de la Banque Laurentienne → la banque
+  compte l'intérêt au nombre de jours ; l'app reprend maintenant le tableau du prêteur. Et joindre les photos/fichiers du prêt.
+- Tableaux transcrits au complet (60 versements chacun). Camélias : pas de tableau reçu (le calcul de l'app s'applique).
+
+**À faire par Loïc (v0.9.17, correctif)**
+- Décompresser, `npm run build`, pousser. Pas de migration. Maxime (27 oct.) : lignes de 638 $ sans immeuble ni logement dans
+  « Paiements reçus » : paiements d'un bail supprimé (« Supprimer ce bail » ne retire pas ses paiements ; v_soldes les cache
+  déjà). L'export les ignore maintenant. Toute lecture directe de `paiements` doit filtrer les baux supprimés.
+
+**À faire par Loïc (v0.9.16)**
+- Exécuter `024_entretien.sql` (après 023). Décompresser le ZIP 0.9.16, `npm run build`, pousser. Demande de Maxime (27 oct.) :
+  « où mettre l'entretien, ex. le chauffe-eau et sa date, pour avoir une alerte de changement » → Profil > Entretien.
 
 **À faire par Loïc (v0.9.15)**
 - Décompresser le ZIP 0.9.15, `npm run build`, pousser. Pas de migration. Demande de Maxime (27 oct.) : extraire les paiements

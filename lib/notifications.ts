@@ -6,7 +6,7 @@ import { supabase } from "./supabase";
 // (ce que l'utilisateur doit faire). Chaque type est ajouté ici, dans CATALOGUE :
 // il apparaît alors automatiquement dans Profil > « Tester les notifications possibles »
 // et dans les préférences du tiroir. Le calcul quotidien est dans la fonction SQL
-// alertes_du_jour() (supabase/013_notifications.sql) : garder les mêmes codes.
+// alertes_du_jour() (supabase/013_notifications.sql, redéfinie en 016, 022 et 024) : garder les mêmes codes.
 
 /** Ce que vise une notification, pour les préférences (ex. pas d'alerte pour le véhicule X). */
 export type Portee = "immeuble" | "vehicule";
@@ -85,6 +85,29 @@ export const CATALOGUE: TypeNotification[] = [
       titre: "Entrer le compteur · {vehicule}",
       description: "Inscrivez le kilométrage du compteur autour du 1er janvier 2027 (onglet Véhicule > Compteur). "
         + "Il sert à calculer la part déductible de 2026 et de 2027.",
+    },
+  },
+  {
+    code: "equipement_remplacement",
+    nom: "Remplacement d'un équipement",
+    quand: "6 mois et 2 mois avant la date de remplacement prévue, puis une fois si elle est passée",
+    portee: "immeuble",
+    exemple: {
+      titre: "Prévoir le remplacement : Chauffe-eau · {immeuble} 3",
+      description: "Chauffe-eau (60 gallons) · installation le 16 décembre 2016 · remplacement prévu le 16 décembre 2026, "
+        + "dans 60 jours (durée de vie de 10 ans). Faites vérifier l'équipement ou demandez une soumission. "
+        + "Quand il est changé, touchez « Remplacé » dans Profil > Entretien (ou changez la date prévue s'il est encore bon).",
+    },
+  },
+  {
+    code: "equipement_entretien",
+    nom: "Entretien d'un équipement",
+    quand: "14 jours avant l'entretien régulier prévu (ex. vidanger le chauffe-eau chaque année)",
+    portee: "immeuble",
+    exemple: {
+      titre: "Faire l'entretien : Chauffe-eau · {immeuble} 3",
+      description: "Vidanger · Chauffe-eau (60 gallons) · prévu le 1er novembre 2026, dans 14 jours (aux 12 mois). "
+        + "Une fois fait, touchez « Entretien fait » dans Profil > Entretien.",
     },
   },
 ];

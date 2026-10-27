@@ -8,9 +8,9 @@ import { formatCents } from "@/lib/argent";
 import { ajouterMois, aujourdhuiIso, dateLisible } from "@/lib/dates";
 import { ecartReleve, SEUIL_ECART_RELEVE, tableauVersements } from "@/lib/amortissement";
 import {
-  assuranceDansAnnee, FOURNISSEUR_TAXE, formatTaux, interetsAnnee, LIBELLE_TAXE, pretDansAnnee,
+  assuranceDansAnnee, avecTableauPreteur, FOURNISSEUR_TAXE, formatTaux, interetsAnnee, LIBELLE_TAXE, pretDansAnnee,
   statutVersement, totauxImmeuble,
-  type Assurance, type Hypotheque, type ImmeubleFF, type Releve, type TaxeVersement, type TypeTaxe,
+  type Assurance, type Hypotheque, type ImmeubleFF, type LigneTableauPreteur, type Releve, type TaxeVersement, type TypeTaxe,
 } from "@/lib/fraisFixes";
 import BarreOnglets from "@/components/BarreOnglets";
 import FeuillePret, { type ModelePret } from "@/components/FeuillePret";
@@ -18,9 +18,11 @@ import FeuilleReleve from "@/components/FeuilleReleve";
 import FeuilleAssurance, { type ModeleAssurance } from "@/components/FeuilleAssurance";
 import FeuilleTaxes from "@/components/FeuilleTaxes";
 import FeuillePaiement from "@/components/FeuillePaiement";
+import DocumentsPret from "@/components/DocumentsPret";
 
 // Frais fixes (v0.8.6) : une carte par immeuble avec Hypothèque, Assurances et Taxes ; sélecteur d'année.
 // Intérêts recalculés à partir de chaque prêt (lib/amortissement.ts) ; le relevé du prêteur a priorité.
+// v0.9.18 : tableau d'amortissement du prêteur (s'il est entré) au lieu du calcul ; documents du prêt.
 // Année gardée dans l'adresse (?a=2026) ; ?i=<immeuble> n'affiche qu'un immeuble (lien du Profil).
 
 type Feuille =
@@ -71,19 +73,24 @@ function Contenu() {
   const [message, setMessage] = useState<{ type: "succes" | "erreur"; texte: string } | null>(null);
 
   const charger = useCallback(async () => {
-    const [im, hy, re, as, tx] = await Promise.all([
+    const [im, hy, re, as, tx, tp] = await Promise.all([
       supabase.from("immeubles").select("id, nom, actif").is("deleted_at", null).order("nom"),
       supabase.from("hypotheques").select("*").is("deleted_at", null).order("debut_terme"),
       supabase.from("hypotheque_releves").select("id, hypotheque_id, annee, interets_releve_cents, solde_fin_cents").is("deleted_at", null),
       supabase.from("assurances").select("*").is("deleted_at", null).order("date_debut"),
       supabase.from("taxes_versements").select("*").is("deleted_at", null).order("echeance"),
+      // Migration 025 pas encore exécutée : erreur ignorée, l'app garde son calcul.
+      supabase.from("hypotheque_versements").select("hypotheque_id, no, date_versement, interets_cents, capital_cents, solde_cents").order("date_versement").limit(5000),
     ]);
     setImmeubles((im.data ?? []) as ImmeubleFF[]);
     if (hy.error || as.error || tx.error) {
       setMigration011(false);
     } else {
       setMigration011(true);
-      setHypotheques(((hy.data ?? []) as Hypotheque[]).map((h) => ({ ...h, taux: Number(h.taux) })));
+      setHypotheques(avecTableauPreteur(
+        ((hy.data ?? []) as Hypotheque[]).map((h) => ({ ...h, taux: Number(h.taux) })),
+        tp.error ? [] : (tp.data ?? []) as LigneTableauPreteur[],
+      ));
       setReleves((re.data ?? []) as Releve[]);
       setAssurances((as.data ?? []) as Assurance[]);
       setTaxes((tx.data ?? []) as TaxeVersement[]);
@@ -218,6 +225,7 @@ function Contenu() {
                   && x.nom_pret === h.nom_pret && x.debut_terme >= h.fin_terme);
                 const tous = tableauVersements(h);
                 const finTerme = tous[tous.length - 1];
+                const selonBanque = tableau.length > 0 && tableau.every((v) => v.preteur);
                 return (
                   <div key={h.id} className="bloc-locataire">
                     <div className="entete" style={{ marginBottom: 4 }}>
@@ -231,7 +239,7 @@ function Contenu() {
                       {!renouvele && joursFin >= 0 && joursFin <= 120 && <span className="pastille">Renouvellement dans {joursFin} j</span>}
                     </div>
                     <dl className="champs" style={{ marginTop: 8 }}>
-                      <div className="champ-groupe"><dt>Intérêts {annee} (calcul)</dt><dd>{formatCents(r.interets)}</dd></div>
+                      <div className="champ-groupe"><dt>Intérêts {annee} ({selonBanque ? "tableau du prêteur" : "calcul"})</dt><dd>{formatCents(r.interets)}</dd></div>
                       <div className="champ-groupe">
                         <dt>Relevé du prêteur</dt>
                         <dd>{r.releve ? formatCents(r.releve.interets_releve_cents) : <span className="aide">à entrer</span>}</dd>
@@ -268,6 +276,13 @@ function Contenu() {
                     {tableau.length > 0 && (
                       <details style={{ marginTop: 8 }}>
                         <summary>Versements {annee} ({tableau.length})</summary>
+                        <p className="aide">
+                          {selonBanque
+                            ? "Chiffres du tableau d'amortissement du prêteur (l'intérêt est compté au nombre de jours, donc chaque mois est un peu différent)."
+                            : tableau.some((v) => v.preteur)
+                              ? "Chiffres du prêteur jusqu'à la fin de son tableau, puis calculés par l'app."
+                              : "Chiffres calculés par l'app (mois égaux). La banque compte au nombre de jours : un mois peut différer de quelques dollars, le total de l'année reste presque le même."}
+                        </p>
                         {tableau.map((v) => (
                           <div key={v.no} className="paiement-ligne">
                             <span>{dateLisible(v.date)}</span>
@@ -276,6 +291,7 @@ function Contenu() {
                         ))}
                       </details>
                     )}
+                    <DocumentsPret hypothequeId={h.id} setErreur={(m) => setMessage(m ? { type: "erreur", texte: m } : null)} />
                   </div>
                 );
               })}

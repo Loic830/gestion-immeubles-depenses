@@ -31,13 +31,22 @@ export const aucunePage = (): PagesParType => ({ bail: [], enquete_credit: [], r
 
 /** Envoie un fichier préparé et l'inscrit dans documents ; lance une erreur en cas d'échec. */
 export async function televerserDocument(bailId: string, type: TypeDocumentBail, f: FichierPrepare): Promise<void> {
+  await envoyer("baux", { bail_id: bailId, type }, f);
+}
+
+/** v0.9.18 : photo ou PDF d'un prêt hypothécaire (lettre du prêteur, tableau d'amortissement…). */
+export async function televerserDocumentPret(hypothequeId: string, f: FichierPrepare): Promise<void> {
+  await envoyer("prets", { hypotheque_id: hypothequeId, type: "pret" }, f);
+}
+
+async function envoyer(dossier: string, lien: Record<string, string>, f: FichierPrepare): Promise<void> {
   const maintenant = new Date();
   const ext = f.mimeType === "application/pdf" ? "pdf" : "jpg";
-  const cle = `baux/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
+  const cle = `${dossier}/${maintenant.getFullYear()}/${String(maintenant.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${ext}`;
   const envoi = await supabase.storage.from(BUCKET_RECUS).upload(cle, f.principal, { contentType: f.mimeType, upsert: false });
   if (envoi.error) throw new Error(`Envoi impossible : ${envoi.error.message}`);
   const { error } = await supabase.from("documents").insert({
-    bail_id: bailId, type, storage_key: cle, mime_type: f.mimeType,
+    ...lien, storage_key: cle, mime_type: f.mimeType,
     date_document: aujourdhuiIso(), nom_original: f.nomOriginal,
   });
   if (error) throw new Error(error.message);

@@ -48,19 +48,23 @@ export async function exporterPaiementsAnnee(annee: number, progression: (etape:
                  logement: string; locataires: string; mois: string[]; auto: boolean };
   const depots = new Map<string, Depot>();
   for (const p of paiements) {
+    // Bail supprimé (erreur de saisie) ou immeuble supprimé : ses paiements restent en base mais ne comptent plus,
+    // comme dans Loyers et dans les revenus de loyers (v_soldes ne montre que les baux non supprimés). v0.9.17
     const m = moisDe.get(p.echeance_id);
+    if (!m) continue;
     const cle = p.depot_id ?? p.id;
     const d = depots.get(cle) ?? {
       date: p.date_recue, montant: 0, payeur: p.payeur === "omh" ? "OMH" : "Locataire",
       mode: MODES[p.mode] ?? p.mode, reference: p.reference ?? "",
-      immeuble: m?.immeuble ?? "", logement: m?.logement ?? "", locataires: m?.locataires ?? "", mois: [], auto: false,
+      immeuble: m.immeuble, logement: m.logement, locataires: m.locataires ?? "", mois: [], auto: false,
     };
     d.montant += Number(p.montant_cents);
-    if (m) d.mois.push(m.mois);
+    d.mois.push(m.mois);
     d.auto = d.auto || (p.auto ?? false) || (p.notes ?? "").startsWith("Marqué payé");
     depots.set(cle, d);
   }
   const liste = Array.from(depots.values()).sort((a, b) => a.date.localeCompare(b.date) || a.immeuble.localeCompare(b.immeuble));
+  if (liste.length === 0) return { depots: 0, total: 0, enMain };
 
   progression("Préparation du fichier Excel…");
   const { default: ExcelJS } = await import("exceljs");
