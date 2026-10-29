@@ -41,8 +41,13 @@ function Loyers() {
   const [logements, setLogements] = useState<Logement[]>([]);
   const [soldesMois, setSoldesMois] = useState<Solde[]>([]);
   const [retards, setRetards] = useState<Solde[]>([]);
-  // Dépôts faits (paiements reçus, sans les crédits ni les chèques en main) par échéance du mois affiché
+  // Dépôts faits (paiements reçus, sans les crédits ni les chèques en main) selon la date du dépôt,
+  // par immeuble (v0.9.19 : avant, rattachés au mois du loyer)
   const [depots, setDepots] = useState<Map<string, number>>(new Map());
+  // Dont les dépôts qui paient d'autres mois que celui affiché (avance ou retard)
+  const [depotsAutresMois, setDepotsAutresMois] = useState(0);
+  // Crédits au locataire sur les loyers du mois affiché
+  const [creditsMois, setCreditsMois] = useState(0);
   // Dont les dépôts de l'OMH (v0.9.12)
   const [depotsOmh, setDepotsOmh] = useState(0);
   const [chargement, setChargement] = useState(true);
@@ -67,21 +72,41 @@ function Loyers() {
     setLogements(((lo.data ?? []) as Logement[]).sort((a, b) => triNumero(a.numero, b.numero)));
     const soldes = (so.data ?? []) as Solde[];
     setSoldesMois(soldes);
-    const parEcheance = new Map<string, number>();
+    // Dépôts selon la date où l'argent est entré (date_recue dans le mois affiché), peu importe le mois du loyer payé
+    const parIm = new Map<string, number>();
     let omh = 0;
-    if (soldes.length) {
-      const { data, error } = await supabase.from("paiements")
-        .select("*")   // avec payeur après la migration 022
-        .in("echeance_id", soldes.map((x) => x.echeance_id))
-        .eq("statut", "recu").neq("mode", "credit").is("deleted_at", null);
-      if (error) setErreur(error.message);
-      for (const p of (data ?? []) as { echeance_id: string; montant_cents: number; payeur?: string }[]) {
-        parEcheance.set(p.echeance_id, (parEcheance.get(p.echeance_id) ?? 0) + p.montant_cents);
+    let autresMois = 0;
+    const { data: pa, error: errPa } = await supabase.from("paiements")
+      .select("*")   // avec payeur après la migration 022
+      .eq("statut", "recu").neq("mode", "credit").is("deleted_at", null)
+      .gte("date_recue", mois).lt("date_recue", decalerMois(mois, 1));
+    if (errPa) setErreur(errPa.message);
+    const recus = (pa ?? []) as { echeance_id: string; montant_cents: number; payeur?: string }[];
+    if (recus.length) {
+      // Immeuble et mois du loyer de chaque paiement ; un bail ou un immeuble supprimé n'est pas dans v_soldes (ignoré, v0.9.17)
+      const { data: ec, error: errEc } = await supabase.from("v_soldes").select("echeance_id, mois, immeuble_id")
+        .in("echeance_id", Array.from(new Set(recus.map((p) => p.echeance_id))));
+      if (errEc) setErreur(errEc.message);
+      const echeance = new Map(((ec ?? []) as { echeance_id: string; mois: string; immeuble_id: string }[]).map((e) => [e.echeance_id, e]));
+      for (const p of recus) {
+        const e = echeance.get(p.echeance_id);
+        if (!e) continue;
+        parIm.set(e.immeuble_id, (parIm.get(e.immeuble_id) ?? 0) + p.montant_cents);
         if (p.payeur === "omh") omh += p.montant_cents;
+        if (e.mois !== mois) autresMois += p.montant_cents;
       }
     }
-    setDepots(parEcheance);
+    let credits = 0;
+    if (soldes.length) {
+      const { data: cr } = await supabase.from("paiements").select("montant_cents")
+        .in("echeance_id", soldes.map((x) => x.echeance_id))
+        .eq("statut", "recu").eq("mode", "credit").is("deleted_at", null);
+      credits = ((cr ?? []) as { montant_cents: number }[]).reduce((t, c) => t + c.montant_cents, 0);
+    }
+    setDepots(parIm);
     setDepotsOmh(omh);
+    setDepotsAutresMois(autresMois);
+    setCreditsMois(credits);
     setRetards((re.data ?? []) as Solde[]);
     setChargement(false);
   }, [mois]);
@@ -97,7 +122,7 @@ function Loyers() {
   const ouvrir = (s: Solde) => setChoisie(s.echeance_id);
 
   const totaux = useMemo(() => ({
-    depots: soldesMois.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
+    depots: Array.from(depots.values()).reduce((s, x) => s + x, 0),
     du: soldesMois.reduce((s, x) => s + x.montant_du_cents, 0),
     recu: soldesMois.reduce((s, x) => s + x.recu_cents, 0),
     retard: retards.reduce((s, x) => s + resteARecevoir(x), 0),
@@ -107,7 +132,7 @@ function Loyers() {
     const liste = soldesMois.filter((x) => x.immeuble_id === im.id);
     return {
       im,
-      depots: liste.reduce((s, x) => s + (depots.get(x.echeance_id) ?? 0), 0),
+      depots: depots.get(im.id) ?? 0,
       du: liste.reduce((s, x) => s + x.montant_du_cents, 0),
       recu: liste.reduce((s, x) => s + x.recu_cents, 0),
       reste: liste.reduce((s, x) => s + resteARecevoir(x), 0),
@@ -119,7 +144,6 @@ function Loyers() {
   const estMoisCourant = mois === moisCourant();
   const aller = (n: number) => router.replace(`/loyers?m=${decalerMois(mois, n).slice(0, 7)}`, { scroll: false });
   const pctDepose = totaux.du ? Math.min(100, Math.round((totaux.depots / totaux.du) * 100)) : 0;
-  const credits = totaux.recu - totaux.depots;
 
   return (
     <main className="page avec-onglets">
@@ -129,21 +153,22 @@ function Loyers() {
 
       {erreur && <div className="message erreur">{erreur}</div>}
 
-      {/* Dépôts faits ce mois-ci ; toucher = par immeuble (v0.9.4) */}
+      {/* Dépôts faits ce mois-ci, selon la date du dépôt (v0.9.19) ; toucher = par immeuble (v0.9.4) */}
       <div role="button" tabIndex={0} className="carte encadre-touchable" aria-expanded={parImmeuble}
            onClick={() => setParImmeuble(!parImmeuble)}
            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setParImmeuble(!parImmeuble); } }}>
         <div className="chiffre-libelle">
-          Dépôts faits en <span>{moisLisible(mois)}</span>
+          Dépôts faits en <span>{moisLisible(mois)}</span> (date du dépôt)
         </div>
         <div className="graphique-haut" style={{ marginTop: 6 }}>
           <Anneau total={totaux.du} parts={[{ valeur: totaux.depots, couleur: "var(--accent)" }]}
                   centre={`${pctDepose} %`} sousCentre="déposé" taille={96} />
           <div>
             <div className="chiffre">{formatCents(totaux.depots)}</div>
-            <div className="chiffre-libelle">Déposé sur {formatCents(totaux.du)} dus</div>
+            <div className="chiffre-libelle">Loyers du mois : {formatCents(totaux.du)}</div>
             {depotsOmh > 0 && <div className="chiffre-libelle">Dont {formatCents(depotsOmh)} de l&apos;OMH</div>}
-            {credits > 0 && <div className="chiffre-libelle">+ {formatCents(credits)} en crédits au locataire</div>}
+            {depotsAutresMois > 0 && <div className="chiffre-libelle">Dont {formatCents(depotsAutresMois)} pour d&apos;autres mois</div>}
+            {creditsMois > 0 && <div className="chiffre-libelle">+ {formatCents(creditsMois)} en crédits au locataire</div>}
             {totaux.reste > 0 && <div className="chiffre-libelle">Reste à recevoir : {formatCents(totaux.reste)}</div>}
           </div>
         </div>
@@ -158,7 +183,7 @@ function Loyers() {
                 <div className="repartition-barre">
                   <span style={{ width: `${du ? Math.min(100, (dep / du) * 100) : 0}%`, background: couleur(i) }} />
                 </div>
-                <div className="chiffre-libelle">Déposé {formatCents(dep)} sur {formatCents(du)} dus</div>
+                <div className="chiffre-libelle">Déposé {formatCents(dep)} · loyers du mois {formatCents(du)}</div>
               </div>
             ))}
           </div>

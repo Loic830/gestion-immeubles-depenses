@@ -1,7 +1,7 @@
 # Passation — Gestion des immeubles
 
 > Document de référence pour reprendre le projet : à lire en premier, par une personne
-> ou par une nouvelle conversation avec Claude. État au **27 octobre 2026**, version **0.9.18**.
+> ou par une nouvelle conversation avec Claude. État au **27 octobre 2026**, version **0.9.19**.
 > Le `README.md` complète ce document (détail de chaque écran et historique des versions).
 
 ---
@@ -24,7 +24,7 @@ Application web progressive (PWA), utilisée surtout sur iPhone, pour gérer **3
 
 **Ce que l'app fait aujourd'hui** : en-tête « Immeubles So-Max » (cloche, avatar → Profil et Actifs) et
 5 onglets en bas, dans l'ordre : Loyers · Baux · Frais fixes · Dépenses · Véhicules.
-1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; toucher un paiement ouvre son détail pour le modifier ou l'annuler (v0.9.7) ; un dépôt peut payer plusieurs mois (v0.9.10) ; encadré des dépôts faits du mois (toucher = par immeuble, v0.9.4) et boutons « Appeler » / « Texter » pour les retards (v0.9.2) ; loyer avec subvention de l'OMH : deux parts par mois, du locataire et de l'OMH (v0.9.12).
+1. **Loyers** 💵 : loyers dus du mois par immeuble, « Reçu » en un geste, paiements partiels, crédits ponctuels, retards (tous mois) ; toucher un paiement ouvre son détail pour le modifier ou l'annuler (v0.9.7) ; un dépôt peut payer plusieurs mois (v0.9.10) ; encadré des dépôts faits du mois (toucher = par immeuble, v0.9.4 ; selon la date du dépôt, v0.9.19) et boutons « Appeler » / « Texter » pour les retards (v0.9.2) ; loyer avec subvention de l'OMH : deux parts par mois, du locataire et de l'OMH (v0.9.12).
 2. **Dépenses** 🧾 : saisie avec photo du reçu, brouillons, répartition entre immeubles, récapitulatif en haut, navigation Mois / Année avec flèches (v0.8.8) ; choix d'un ou plusieurs immeubles (puces « Tous » + chaque immeuble, v0.9.1) ; anneau par catégorie et barres en mode Mois et Année (v0.9.2), cachés par défaut : toucher le montant du haut les affiche (v0.9.4). Les exports sont dans Profil > Rapport d'impôts (v0.9.0).
 3. **Baux** 🔑 : baux et locataires, photo du bail signé, changement de loyer en cours de bail, fin de bail anticipée avec montant forfaitaire, extras et crédits mensuels, fenêtre d'avis TAL ; filtre par années (courante à courante − 6), immeuble et recherche ; dossier prêteur par immeuble **pour la période choisie** ; historique des baux d'un logement ; **modification complète d'un bail** ; pop-up de remplacement quand un nouveau bail chevauche un bail en cours (v0.8.7) ; nouveau bail : « Tous les mois passés sont payés » avec mois à exclure, prix le plus récent du logement affiché avant le loyer (v0.9.1) ; encadré du haut : taux d'occupation, loyers par mois et barres de l'année (toucher = par immeuble) (v0.9.2) ; filtres par logement (immeuble choisi) et par état des baux, « Renouveler le bail », « Modifier le prix du loyer » (v0.9.3) ; nouveau bail : question sur les mois passés, alerte sans photo du bail, photos de l'enquête de crédit et des règlements d'immeuble (aussi sur la fiche) (v0.9.4) ; **cession de bail** sur la fiche, type de bail (nouveau, renouvellement, cession) et dossier prêteur qui joint toute la chaîne des copies : bail d'origine, renouvellements, cession (v0.9.5) ; « Renouveler le bail » aussi sur un bail terminé (historique, dates passées, mois passés payés) et « C'est un renouvellement de ce bail » pour raccorder le bail suivant (v0.9.6) ; « Loyers dus » : toucher un mois ouvre ses paiements, toucher un paiement ouvre son détail à modifier ou annuler (v0.9.7) ; fin du bail toujours au dernier jour du mois, choisie par mois et année (v0.9.8) ; « Cession de bail » aussi sur un bail terminé (historique, date passée, mois passés payés) (v0.9.9).
 4. **Véhicules** 🚗 (v0.9.0 : plusieurs véhicules, flèches ‹ › avec « marque modèle couleur » au centre) : journal de bord (km), trajets fréquents (puce choisie colorée, immeuble caché ; « Composer un trajet » en dernière puce), frais du véhicule, relevés du compteur, prorata déductible par immeuble.
@@ -272,6 +272,13 @@ Un message « already exists » signifie que le fichier a déjà été exécuté
 
 **À faire par Loïc (v0.9.1)**
 - Exécuter `015_mois_payes.sql`. Sans elle, la case « mois passés payés » est ignorée sans message (l'ancienne `creer_bail` ne lit pas `mois_payes`).
+
+**À faire par Loïc (v0.9.19)**
+- Rien à exécuter dans Supabase (pas de migration). Décompresser, `npm run build`, pousser.
+
+**Choix faits en 0.9.19** (Maxime, 28 oct. : « Date de dépôt »). « Dépôts faits » de l'onglet Loyers = argent entré dans le mois
+selon `date_recue` (comme le relevé de banque), plus selon le mois du loyer. La ligne « Dont X $ pour d'autres mois » explique
+l'écart ; le pourcentage de l'anneau reste plafonné à 100 %. La fiche du bail et les soldes ne changent pas (toujours par mois de loyer).
 
 **À faire par Loïc (v0.9.18)**
 - Exécuter `025_tableau_preteur.sql`, puis le script `tableaux-banque-laurentienne.sql` (livré à part, pas dans le dépôt :
